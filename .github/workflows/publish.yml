@@ -1,0 +1,72 @@
+name: Publish and verify Windows candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Publish committed packages and download them for verification
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, tempfile, zipfile
+          version = '0.1.0-candidate.1'
+          tag = 'v' + version
+          original = pathlib.Path('downloads') / version
+          repo = os.environ['GITHUB_REPOSITORY']
+          commit = os.environ['GITHUB_SHA']
+          receipt = json.loads((original / 'package-receipt.json').read_text())
+          assert receipt['version'] == version and len(receipt['products']) == 2
+          names = {p['filename'] for p in receipt['products']}
+          assert len(names) == 2 and all(pathlib.Path(n).name == n for n in names)
+          assert sum(n.endswith('-source.zip') for n in names) == 1
+          assert sum(n.endswith('-win32.zip') for n in names) == 1
+          manifest = (original / 'SHA256SUMS.txt').read_bytes()
+          hashes = {}
+          for line in manifest.decode().splitlines():
+              digest, name = line.split(maxsplit=1)
+              assert len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)
+              assert name in names | {'package-receipt.json'} and name not in hashes
+              hashes[name] = digest
+          assert names <= hashes.keys()
+          def verify(base):
+              assert (base / 'SHA256SUMS.txt').read_bytes() == manifest
+              result = []
+              for name, digest in hashes.items():
+                  assert hashlib.sha256((base / name).read_bytes()).hexdigest() == digest
+              for p in receipt['products']:
+                  f = base / p['filename']
+                  assert f.stat().st_size == p['bytes']
+                  with zipfile.ZipFile(f) as archive:
+                      assert archive.testzip() is None
+                      assert len(archive.infolist()) == p['file_count']
+                      assert all('tests' not in pathlib.PurePosixPath(n).parts for n in archive.namelist())
+                  result.append(dict(p, zip_crc_verified=True))
+              return result
+          verify(original)
+          assets = [str(original / n) for n in sorted(names)]
+          assets += [str(original / 'SHA256SUMS.txt'), str(original / 'package-receipt.json')]
+          subprocess.run(['gh', 'release', 'create', tag, *assets, '--repo', repo,
+                          '--target', commit, '--prerelease', '--title', 'UNI2Blacklist ' + version,
+                          '--notes-file', str(original / 'RELEASE_NOTES.zh-CN.md')], check=True)
+          destination = pathlib.Path(tempfile.mkdtemp(prefix='uniBlacklist-', dir=os.environ['RUNNER_TEMP']))
+          subprocess.run(['gh', 'release', 'download', tag, '--repo', repo, '--dir', str(destination),
+                          '--pattern', '*.zip', '--pattern', 'SHA256SUMS.txt',
+                          '--pattern', 'package-receipt.json'], check=True)
+          delivery = dict(repository=repo, tag=tag, publication_commit=commit,
+                          source_commit=receipt['source_commit'], products=verify(destination),
+                          authorized_download_verified=True, source_without_test_suite=True,
+                          original_game_execution=False, native_windows_game_validation=False)
+          proof = destination / 'delivery-receipt.json'
+          proof.write_text(json.dumps(delivery, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+          subprocess.run(['gh', 'release', 'upload', tag, str(proof), '--repo', repo], check=True)
+          print('Uploaded files downloaded again: SHA-256, sizes, ZIP CRC, file counts verified.')
+          PY
