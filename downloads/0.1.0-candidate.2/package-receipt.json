@@ -1,0 +1,33 @@
+{
+  "version": "0.1.0-candidate.2",
+  "source_commit": "114a56c404ef4d7cb55519aa3d5c6bc7206a2196",
+  "compiler": "MinGW-w64 GCC 14 i686-w64-mingw32 static runtime",
+  "products": [
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.2-win32.zip",
+      "bytes": 622088,
+      "sha256": "875c6f4eea29add7d80a36100d2ca9aedd257ceba08f6fdf6bd1d61fafaafbfe",
+      "file_count": 9
+    },
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.2-source.zip",
+      "bytes": 76225,
+      "sha256": "1ce413263c18b96924eb4e851b2046b16c62374dbfeccb909195f073fe799015",
+      "file_count": 32
+    }
+  ],
+  "game_execution": false,
+  "native_windows_game_validation": false,
+  "wine_native_control_checks": 62,
+  "wine_gui_operation_checks": 14,
+  "packaged_dll_load_and_reject_check": true,
+  "old_abi_request_rejected": true,
+  "wine_gui_stderr_sigsegv_unattributed": true,
+  "wine_final_gui_stderr_empty": true,
+  "original_assets_included": false,
+  "test_suite_included": false,
+  "binaries": {
+    "UNI2Blacklist.exe": "c6d08e940380ae469d81537e045f005e923aa66a2d2aad65737d8ad6fd95d59f",
+    "uni2-blacklist.dll": "091e528cfdbd5a4ea090c2f0f8ba61d268d8b914ff958d2b84412ee1cd823d15"
+  }
+}
