@@ -46,7 +46,11 @@ Steam 官方接口依据为 Valve source-sdk-2013 固定提交 `0759e2e8e179d535
 - [isteamnetworkingutils.h](https://github.com/ValveSoftware/source-sdk-2013/blob/0759e2e8e179d5352d81d0d4aaded72c1704b7a9/src/public/steam/isteamnetworkingutils.h)
 - [steamnetworkingtypes.h](https://github.com/ValveSoftware/source-sdk-2013/blob/0759e2e8e179d5352d81d0d4aaded72c1704b7a9/src/public/steam/steamnetworkingtypes.h)
 
-接口从游戏已初始化的上下文取得，控制线程不初始化 Steam、不重新请求 LobbyList。旧与现代接口分别在缓存可用时安装；尚未齐全时 GUI 明示等待。函数目标必须是可执行 MEM_IMAGE 内存；安装失败关闭过滤，不用未证实接口回退。
+接口从游戏已初始化的上下文取得，控制线程不初始化 Steam、不重新请求 LobbyList。旧与现代接口分别在缓存可用时安装；尚未齐全时 GUI 明示等待。原游戏和旧 P2P 的 MinHook 函数目标继续要求可执行 MEM_IMAGE 内存。candidate.2 的现代 Messages002 改用原表槽位指针替换：slot 0 Send、slot 2 Accept、slot 1 Receive，先保存全部原函数，再按这个顺序安装。验证既有 Messages002 六个公开方法为已提交可执行内存，现代目标可为 MEM_PRIVATE/MEM_MAPPED 的运行时 thunk；不在其入口写代码。未修改的方法、表指针、RTTI 和隐藏方法保留，既有表若被同接口其他实例共享，相应三个方法同样经过过滤。
+
+每个槽位以 VirtualProtect 临时取得写权限（原页可执行时保留执行权限），InterlockedCompareExchangePointer 只在值仍等于预期原函数时改写，并恢复原页权限；首个错误保留，已持有槽位按反序回退，其他插件的指针不覆盖。完整组成功后才置现代位2；任何失败令所有拦截放行，不回退到猜测的新 API 或不完整握手保护。安装结束及每100毫秒核对缓存 interface、表与三槽位归属；变化就锁存错误、停用。原 DLL 与保存的函数指针保留至进程退出。
+
+IPC ABI 升至2（Local\UNI2Blacklist-v2-PID），不能与旧 GUI/DLL 混用；升级需重启游戏。挂钩失败后映射仍有效时，重新打开同版本 GUI 可以只连接诊断状态，不能把“已连接”当成过滤成功。分组诊断的 native index0–4=search/join/request/chat/members，legacy index0–2=Send/Read/Accept（slot0/2/3），messages002 index即slot，未知值 UINT32_MAX。报告 memory_* 对应目标函数页，slot_memory_* 对应取得写权限前的表页；两者不能混读。MH 阶段的 minhook_status 是原 MinHook 返回值；验证拒绝使用合成 Win32 INVALID_ADDRESS/INVALID_DATA/RETRY，权限操作错误为 GetLastError 原值。cleanup_error 按该组 method 为 MinHook 状态或 Win32 状态，restore_error 总为页权限恢复的 Win32 状态。
 
 ## 场景与未完成证据
 

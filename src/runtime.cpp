@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <cstdio>
 #include <string>
 #include <vector>
 #include "protocol.h"
@@ -20,6 +21,11 @@ UbShared* shared=nullptr;
 HANDLE ipc_mutex=nullptr, mapping=nullptr;
 volatile LONG started=0, ready=0;
 volatile LONG network_mask=0;
+bool network_failed=false;
+UbHookDiagnostic hook_diagnostics[3]{};
+UbState runtime_state=UB_STARTING;
+UbStatus runtime_status=UB_OK;
+char runtime_message[256]{};
 SRWLOCK policy_lock=SRWLOCK_INIT;
 uint64_t ids[UB_MAX_BLOCKED]{};
 uint32_t id_count=0;
@@ -36,8 +42,12 @@ bool lock_ipc(DWORD ms=10) {
     return r==WAIT_OBJECT_0 || r==WAIT_ABANDONED;
 }
 void message(const char* s, UbState state, UbStatus status=UB_OK) {
+    runtime_state=state;runtime_status=status;
+    strncpy(runtime_message,s,sizeof(runtime_message)-1);runtime_message[sizeof(runtime_message)-1]=0;
     if (!shared || !lock_ipc()) return;
     shared->state=state;shared->status=status;
+    if (state==UB_ERROR) {shared->filter_active=0;shared->effective_enabled=0;}
+    memcpy(shared->hook_diagnostics,hook_diagnostics,sizeof(hook_diagnostics));
     strncpy(shared->message_utf8,s,sizeof(shared->message_utf8)-1);
     shared->message_utf8[sizeof(shared->message_utf8)-1]=0;
     ReleaseMutex(ipc_mutex);
@@ -313,17 +323,69 @@ bool signature(const UbSignature& s) {
 }
 struct Hook {void* target;void* detour;void** original;};
 std::vector<void*> own_hooks;
-bool install(std::vector<Hook>& hooks) {
+void target_info(UbHookDiagnostic& d,void* target) {
+    DWORD saved=GetLastError();
+    d.target_address=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(target));
+    d.memory_state=d.memory_type=d.memory_protect=d.module_rva=d.code_bytes=0;
+    memset(d.code_prefix,0,sizeof(d.code_prefix));memset(d.module_utf8,0,sizeof(d.module_utf8));
+    MEMORY_BASIC_INFORMATION m{};
+    if (target && VirtualQuery(target,&m,sizeof(m))) {
+        d.memory_state=m.State;d.memory_type=m.Type;d.memory_protect=m.Protect;
+        uintptr_t end=reinterpret_cast<uintptr_t>(m.BaseAddress)+m.RegionSize;
+        if (end>reinterpret_cast<uintptr_t>(target)) {
+            size_t bytes=std::min<size_t>(sizeof(d.code_prefix),end-reinterpret_cast<uintptr_t>(target));
+            if (UbRead(reinterpret_cast<uintptr_t>(target),d.code_prefix,bytes)) d.code_bytes=static_cast<uint32_t>(bytes);
+        }
+        HMODULE module=nullptr;
+        if (m.Type==MEM_IMAGE && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|
+            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(target),&module)) {
+            wchar_t path[32768]{};DWORD n=GetModuleFileNameW(module,path,32768);
+            if (n && n<32768) {
+                const wchar_t* name=wcsrchr(path,L'\\');name=name?name+1:path;
+                WideCharToMultiByte(CP_UTF8,0,name,-1,d.module_utf8,sizeof(d.module_utf8),nullptr,nullptr);
+                d.module_utf8[sizeof(d.module_utf8)-1]=0;
+                d.module_rva=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(target)-reinterpret_cast<uintptr_t>(module));
+            }
+        }
+    }
+    SetLastError(saved);
+}
+void reset_diagnostic(UbHookDiagnostic& d,UbHookMethod method) {
+    d={};d.method=method;d.slot=UINT32_MAX;d.index=UINT32_MAX;
+}
+bool install(std::vector<Hook>& hooks,UbHookDiagnostic& d) {
     std::vector<void*> created;
-    for (auto& h:hooks) {
-        if (!UbExecutable(h.target) || MH_CreateHook(h.target,h.detour,h.original)!=MH_OK) goto fail;
+    for (size_t i=0;i<hooks.size();i++) {
+        auto& h=hooks[i];d.index=static_cast<uint32_t>(i);
+        if (i<5) d.targets[i]=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(h.target));
+        if (d.interface_address) {
+            constexpr unsigned slots[]={0,2,3};d.slot=slots[i];
+            d.slot_address=d.vtable_address+d.slot*4;
+        }
+        target_info(d,h.target);d.stage=UB_STAGE_TARGET;
+        if (!UbExecutable(h.target)) {d.win32_error=ERROR_INVALID_ADDRESS;goto fail;}
+        d.stage=UB_STAGE_MH_CREATE;
+        d.minhook_status=MH_CreateHook(h.target,h.detour,h.original);
+        if (d.minhook_status!=MH_OK) goto fail;
         created.push_back(h.target);
     }
-    for (void* p:created) if (MH_QueueEnableHook(p)!=MH_OK) goto fail;
-    if (MH_ApplyQueued()!=MH_OK) goto fail;
+    for (size_t i=0;i<created.size();i++) {
+        d.index=static_cast<uint32_t>(i);target_info(d,created[i]);
+        if (d.interface_address) {constexpr unsigned slots[]={0,2,3};d.slot=slots[i];d.slot_address=d.vtable_address+d.slot*4;}
+        d.stage=UB_STAGE_MH_QUEUE;d.minhook_status=MH_QueueEnableHook(created[i]);
+        if (d.minhook_status!=MH_OK) goto fail;
+    }
+    d.stage=UB_STAGE_MH_APPLY;d.minhook_status=MH_ApplyQueued();
+    if (d.minhook_status!=MH_OK) goto fail;
+    d.stage=UB_STAGE_READY;
     own_hooks.insert(own_hooks.end(),created.begin(),created.end());return true;
 fail:
-    for (void* p:created) {MH_DisableHook(p);MH_RemoveHook(p);}
+    for (void* p:created) {
+        MH_STATUS s=MH_DisableHook(p);
+        if (s!=MH_OK && s!=MH_ERROR_DISABLED && !d.cleanup_error) d.cleanup_error=static_cast<uint32_t>(s);
+        s=MH_RemoveHook(p);
+        if (s!=MH_OK && !d.cleanup_error) d.cleanup_error=static_cast<uint32_t>(s);
+    }
     return false;
 }
 void* vfunction(void* iface,unsigned slot) {
@@ -331,29 +393,169 @@ void* vfunction(void* iface,unsigned slot) {
     if (UbGet(reinterpret_cast<uintptr_t>(iface),vt)) UbGet(vt+slot*4,fn);
     return fn;
 }
+struct VtableSlot {
+    uintptr_t address=0;
+    void* original=nullptr;
+    void* detour=nullptr;
+    DWORD original_protect=0;
+    bool owned=false;
+};
+std::array<VtableSlot,3> modern_slots{};
+uintptr_t modern_interface=0,modern_vtable=0;
+
+// Only replace existing slots. Do not clone/truncate the SDK's concrete vtable:
+// RTTI, private methods and every unmodified slot must keep their original layout.
+bool exchange_slot(VtableSlot& s,bool installing,UbHookDiagnostic& d) {
+    d.slot_address=static_cast<uint32_t>(s.address);target_info(d,s.original);
+    MEMORY_BASIC_INFORMATION m{};
+    d.slot_memory_state=d.slot_memory_type=d.slot_memory_protect=0;
+    d.stage=UB_STAGE_PROTECT;
+    if (!s.address || (s.address&3) || !VirtualQuery(reinterpret_cast<void*>(s.address),&m,sizeof(m))) {
+        d.win32_error=ERROR_INVALID_ADDRESS;return false;
+    }
+    d.slot_memory_state=m.State;d.slot_memory_type=m.Type;d.slot_memory_protect=m.Protect;
+    if (m.State!=MEM_COMMIT || (m.Protect&(PAGE_GUARD|PAGE_NOACCESS))) {d.win32_error=ERROR_INVALID_ADDRESS;return false;}
+    bool executable=(m.Protect&(PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))!=0;
+    DWORD before=0;
+    if (!VirtualProtect(reinterpret_cast<void*>(s.address),sizeof(void*),
+            executable?PAGE_EXECUTE_READWRITE:PAGE_READWRITE,&before)) {
+        d.win32_error=GetLastError();return false;
+    }
+    if (installing) s.original_protect=before;
+    void* expected=installing?s.original:s.detour;
+    void* desired=installing?s.detour:s.original;
+    d.stage=UB_STAGE_EXCHANGE;
+    void* observed=InterlockedCompareExchangePointer(reinterpret_cast<void* volatile*>(s.address),desired,expected);
+    d.observed_address=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(observed));
+    bool swapped=observed==expected || (!installing && observed==desired);
+    if (observed==expected) s.owned=installing;
+    else if (!installing) s.owned=false; // Another plugin's value is never overwritten.
+    if (!swapped) d.win32_error=ERROR_RETRY;
+    DWORD ignored=0;
+    DWORD restore_to=installing?before:s.original_protect;
+    if (!VirtualProtect(reinterpret_cast<void*>(s.address),sizeof(void*),restore_to,&ignored)) {
+        d.restore_error=GetLastError();
+        if (swapped) {d.stage=UB_STAGE_RESTORE;d.win32_error=d.restore_error;}
+        return false;
+    }
+    return swapped;
+}
+void rollback_modern(UbHookDiagnostic& d) {
+    for (auto it=modern_slots.rbegin();it!=modern_slots.rend();++it) {
+        if (!it->owned) continue;
+        UbHookDiagnostic cleanup{};
+        if (!exchange_slot(*it,false,cleanup) && !d.cleanup_error) d.cleanup_error=cleanup.win32_error;
+        if (cleanup.restore_error && !d.restore_error) d.restore_error=cleanup.restore_error;
+    }
+}
+bool install_modern(void* iface,UbHookDiagnostic& d) {
+    d.interface_address=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(iface));
+    uintptr_t vt=0;d.stage=UB_STAGE_CONTEXT;
+    if (!UbGet(reinterpret_cast<uintptr_t>(iface),vt) || !vt || (vt&3) || vt>UINTPTR_MAX-24) {
+        d.win32_error=ERROR_INVALID_ADDRESS;return false;
+    }
+    d.vtable_address=static_cast<uint32_t>(vt);
+    void* functions[6]{};
+    if (!UbRead(vt,functions,sizeof(functions))) {d.win32_error=ERROR_INVALID_ADDRESS;return false;}
+    // The fixed Messages002 contract has six public methods. The concrete table
+    // may have additional entries; they are neither read nor modified.
+    for (unsigned i=0;i<6;i++) {
+        d.slot=d.index=i;d.slot_address=static_cast<uint32_t>(vt+i*4);
+        target_info(d,functions[i]);d.stage=UB_STAGE_TARGET;
+        if (i<3) d.targets[i]=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(functions[i]));
+        // Steam can return executable runtime thunks outside MEM_IMAGE. Pointer
+        // hooks don't disassemble or patch that code and can preserve those thunks.
+        if (!UbExecutable(functions[i],false)) {d.win32_error=ERROR_INVALID_ADDRESS;return false;}
+    }
+    original_ms=reinterpret_cast<ModernSend>(functions[0]);
+    original_mr=reinterpret_cast<ModernRead>(functions[1]);
+    original_ma=reinterpret_cast<ModernAccept>(functions[2]);
+    void* detours[]={reinterpret_cast<void*>(hook_ms),reinterpret_cast<void*>(hook_mr),reinterpret_cast<void*>(hook_ma)};
+    for (unsigned i=0;i<3;i++) modern_slots[i]={vt+i*4,functions[i],detours[i],0,false};
+    modern_interface=reinterpret_cast<uintptr_t>(iface);modern_vtable=vt;
+    // Originals are published before any detour. Atomic CAS validates ownership.
+    for (unsigned i:{0u,2u,1u}) {
+        d.slot=d.index=i;
+        if (!exchange_slot(modern_slots[i],true,d)) {rollback_modern(d);return false;}
+    }
+    uintptr_t current_vtable=0;
+    if (context(0x5f9798)!=iface || !UbGet(reinterpret_cast<uintptr_t>(iface),current_vtable) || current_vtable!=vt) {
+        d.stage=UB_STAGE_OWNERSHIP;d.index=d.slot=UINT32_MAX;
+        d.observed_address=static_cast<uint32_t>(current_vtable);d.win32_error=ERROR_INVALID_ADDRESS;
+        rollback_modern(d);return false;
+    }
+    for (unsigned i=0;i<3;i++) {
+        void* value=nullptr;
+        if (!UbGet(modern_slots[i].address,value) || value!=modern_slots[i].detour) {
+            d.stage=UB_STAGE_OWNERSHIP;d.index=d.slot=i;d.slot_address=static_cast<uint32_t>(modern_slots[i].address);
+            target_info(d,modern_slots[i].original);
+            d.observed_address=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(value));d.win32_error=ERROR_RETRY;
+            rollback_modern(d);return false;
+        }
+    }
+    d.stage=UB_STAGE_READY;return true;
+}
+void network_failure(bool modern) {
+    InterlockedExchange(&ready,0);network_failed=true;
+    const auto& d=hook_diagnostics[modern?2:1];
+    char text[256]{};
+    std::snprintf(text,sizeof(text),"%s 挂钩失败（%s，MH=%ld，Win32=%lu）；拦截已停用，请保存诊断状态。",
+        modern?"Messages002":"旧 P2P",UbStageName(d.stage),static_cast<long>(d.minhook_status),
+        static_cast<unsigned long>(d.win32_error));
+    message(text,UB_ERROR,UB_HOOK_FAILURE);
+}
 bool install_network(bool modern) {
+    if (network_failed) return false;
     void* iface=context(modern?0x5f9798:0x5a3c08);
     if (!iface) return false;
-    std::vector<Hook> h={
-        {vfunction(iface,0),modern?reinterpret_cast<void*>(hook_ms):reinterpret_cast<void*>(hook_ls),
-            modern?reinterpret_cast<void**>(&original_ms):reinterpret_cast<void**>(&original_ls)},
-        {vfunction(iface,modern?1:2),modern?reinterpret_cast<void*>(hook_mr):reinterpret_cast<void*>(hook_lr),
-            modern?reinterpret_cast<void**>(&original_mr):reinterpret_cast<void**>(&original_lr)},
-        {vfunction(iface,modern?2:3),modern?reinterpret_cast<void*>(hook_ma):reinterpret_cast<void*>(hook_la),
-            modern?reinterpret_cast<void**>(&original_ma):reinterpret_cast<void**>(&original_la)}};
-    if (!install(h)) {
-        InterlockedExchange(&ready,0);
-        message("通信挂钩安装失败；黑名单已停用，请保存诊断状态。",UB_ERROR,UB_HOOK_FAILURE);return false;
+    auto& d=hook_diagnostics[modern?2:1];reset_diagnostic(d,modern?UB_HOOK_VTABLE:UB_HOOK_MINHOOK);
+    bool ok=false;
+    if (modern) {
+        LONG previous=InterlockedExchange(&ready,0);
+        ok=install_modern(iface,d);
+        if (ok) InterlockedExchange(&ready,previous);
+    } else {
+        d.interface_address=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(iface));
+        d.stage=UB_STAGE_CONTEXT;
+        uintptr_t vt=0;
+        if (UbGet(reinterpret_cast<uintptr_t>(iface),vt) && vt && !(vt&3) && vt<=UINTPTR_MAX-16) {
+            d.vtable_address=static_cast<uint32_t>(vt);
+            std::vector<Hook> h={
+                {vfunction(iface,0),reinterpret_cast<void*>(hook_ls),reinterpret_cast<void**>(&original_ls)},
+                {vfunction(iface,2),reinterpret_cast<void*>(hook_lr),reinterpret_cast<void**>(&original_lr)},
+                {vfunction(iface,3),reinterpret_cast<void*>(hook_la),reinterpret_cast<void**>(&original_la)}};
+            ok=install(h,d);
+        } else d.win32_error=ERROR_INVALID_ADDRESS;
     }
+    if (!ok) {network_failure(modern);return false;}
     InterlockedOr(&network_mask,modern?2:1);
-    if (network_mask==3) message("已接入：候选过滤、握手和双通信接口；请在本机验证匹配。",UB_READY);
+    if (network_mask==3 && !network_failed) message("已接入：候选过滤、握手和双通信接口；请在本机验证匹配。",UB_READY);
     return true;
+}
+void check_modern_ownership() {
+    if (network_failed || !(network_mask&2)) return;
+    uintptr_t vt=0;
+    if (context(0x5f9798)!=reinterpret_cast<void*>(modern_interface) || !UbGet(modern_interface,vt) || vt!=modern_vtable) {
+        auto& d=hook_diagnostics[2];d.stage=UB_STAGE_OWNERSHIP;d.index=d.slot=UINT32_MAX;
+        d.observed_address=static_cast<uint32_t>(vt);d.win32_error=ERROR_INVALID_ADDRESS;
+        network_failure(true);return;
+    }
+    for (unsigned i=0;i<3;i++) {
+        void* value=nullptr;auto& s=modern_slots[i];
+        if (!UbGet(s.address,value) || value!=s.detour) {
+            auto& d=hook_diagnostics[2];d.stage=UB_STAGE_OWNERSHIP;d.slot=d.index=i;
+            d.slot_address=static_cast<uint32_t>(s.address);target_info(d,s.original);
+            d.observed_address=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(value));d.win32_error=ERROR_RETRY;
+            network_failure(true);return;
+        }
+    }
 }
 DWORD WINAPI worker(void*) {
     bool legacy_attempted=false,modern_attempted=false;
     for (;;) {
         if (!legacy_attempted && context(0x5a3c08)) {legacy_attempted=true;install_network(false);}
         if (!modern_attempted && context(0x5f9798)) {modern_attempted=true;install_network(true);}
+        check_modern_ownership();
         if (lock_ipc()) {
             AcquireSRWLockExclusive(&policy_lock);
             enabled=shared->enable!=0;client_tick=shared->client_tick;
@@ -361,8 +563,13 @@ DWORD WINAPI worker(void*) {
             memcpy(ids,shared->blocked,id_count*8);std::sort(ids,ids+id_count);
             ReleaseSRWLockExclusive(&policy_lock);
             shared->policy_ack=shared->policy_revision;
+            shared->state=runtime_state;shared->status=runtime_status;
+            memcpy(shared->message_utf8,runtime_message,sizeof(runtime_message));
             shared->heartbeat=GetTickCount();UbGet(image+0x5a4764,shared->host_scene);
             shared->battle_suspended=battle();shared->network_hooks_ready=static_cast<uint32_t>(network_mask);
+            shared->filter_active=ready==1 && enabled && DWORD(GetTickCount()-client_tick)<10000 && !shared->battle_suspended;
+            shared->effective_enabled=shared->filter_active && network_mask==3 && !network_failed;
+            memcpy(shared->hook_diagnostics,hook_diagnostics,sizeof(hook_diagnostics));
             shared->candidate_skips=skips;shared->request_rejects=rejects;
             shared->send_rejects=sends;shared->receive_drops=drops;shared->metadata_errors=errors;
             AcquireSRWLockExclusive(&capture_lock);
@@ -407,17 +614,19 @@ extern "C" __declspec(dllexport) DWORD WINAPI BlacklistStart(void* argument) {
     message("候选和房间过滤启动中；等待游戏初始化通信接口，握手保护尚未齐全。",UB_STARTING);
     HMODULE retained=nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,reinterpret_cast<LPCWSTR>(&BlacklistStart),&retained);
-    if (MH_Initialize()!=MH_OK) {message("无法初始化挂钩。",UB_ERROR,UB_HOOK_FAILURE);return finish(UB_HOOK_FAILURE);}
+    reset_diagnostic(hook_diagnostics[0],UB_HOOK_MINHOOK);
+    hook_diagnostics[0].stage=UB_STAGE_MH_INIT;hook_diagnostics[0].minhook_status=MH_Initialize();
+    if (hook_diagnostics[0].minhook_status!=MH_OK) {message("无法初始化挂钩。",UB_ERROR,UB_HOOK_FAILURE);return finish(UB_HOOK_FAILURE);}
     std::vector<Hook> h={
         {reinterpret_cast<void*>(image+SIG_search_results.rva),reinterpret_cast<void*>(hook_search),reinterpret_cast<void**>(&original_search)},
         {reinterpret_cast<void*>(image+SIG_join_lobby.rva),reinterpret_cast<void*>(hook_join),reinterpret_cast<void**>(&original_join)},
         {reinterpret_cast<void*>(image+SIG_p2p_request.rva),reinterpret_cast<void*>(hook_request),reinterpret_cast<void**>(&original_request)},
         {reinterpret_cast<void*>(image+SIG_lobby_chat.rva),reinterpret_cast<void*>(hook_chat),reinterpret_cast<void**>(&original_chat)},
         {reinterpret_cast<void*>(image+SIG_lobby_members.rva),reinterpret_cast<void*>(hook_members),reinterpret_cast<void**>(&original_members)}};
-    if (!install(h)) {message("原生入口挂钩失败；黑名单未启用。",UB_ERROR,UB_HOOK_FAILURE);return finish(UB_HOOK_FAILURE);}
+    if (!install(h,hook_diagnostics[0])) {message("原生入口挂钩失败；黑名单未启用。",UB_ERROR,UB_HOOK_FAILURE);return finish(UB_HOOK_FAILURE);}
     InterlockedExchange(&ready,1);
     HANDLE thread=CreateThread(nullptr,0,worker,nullptr,0,nullptr);
-    if (!thread) {message("无法启动黑名单控制线程。",UB_ERROR,UB_IPC_FAILURE);return finish(UB_IPC_FAILURE);}
+    if (!thread) {InterlockedExchange(&ready,0);message("无法启动黑名单控制线程。",UB_ERROR,UB_IPC_FAILURE);return finish(UB_IPC_FAILURE);}
     CloseHandle(thread);return finish(UB_OK);
 }
 BOOL WINAPI DllMain(HINSTANCE module,DWORD reason,LPVOID) {

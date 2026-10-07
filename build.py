@@ -8,7 +8,7 @@ import shutil
 import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parent
-VERSION = '0.1.0-candidate.1'
+VERSION = '0.1.0-candidate.2'
 
 def main():
     p = argparse.ArgumentParser()
@@ -40,7 +40,7 @@ def main():
         if (ROOT/name).exists():shutil.copy2(ROOT/name,out/name)
     shutil.copy2(vendor/'LICENSE.txt',out/'MinHook-LICENSE.txt')
     (out/'docs').mkdir(exist_ok=True)
-    for name in ['VALIDATION.zh-CN.md','NATIVE_CONTRACT.zh-CN.md']:
+    for name in ['VALIDATION.zh-CN.md','NATIVE_CONTRACT.zh-CN.md','HOOK_FIX.zh-CN.md']:
         if (ROOT/'docs'/name).exists():shutil.copy2(ROOT/'docs'/name,out/'docs'/name)
     receipt={f.relative_to(out).as_posix():hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(out.rglob('*')) if f.is_file() and f.name!='SHA256.json'}
     (out/'SHA256.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')

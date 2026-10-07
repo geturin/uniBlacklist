@@ -305,7 +305,7 @@ void verify_loaded_dll(HANDLE process, const MODULEENTRY32W& module, const IMAGE
         !ReadProcessMemory(process, module.modBaseAddr + dos.e_lfanew, &loaded, sizeof(loaded), &read) || read != sizeof(loaded))
         fail(L"无法核对已装载黑名单 DLL 的版本。", GetLastError());
     if (memcmp(&loaded, &identity, sizeof(identity)) != 0)
-        fail(L"游戏保留的是另一个构建版本的黑名单 DLL。请停止旧记录并重新启动游戏，再使用这个程序包。 ");
+        fail(L"游戏保留的是旧版本黑名单 DLL。请关闭旧黑名单窗口并重新启动游戏，再使用这个程序包。 ");
 }
 } // namespace
 std::wstring UbErrorText(DWORD code) { return error_text(code); }
@@ -360,7 +360,10 @@ DWORD UbAttach(DWORD pid) {
         auto ret=call_remote(process.value,reinterpret_cast<uintptr_t>(mod->modBaseAddr)+rva,param);
         SIZE_T read=0;
         if(!ReadProcessMemory(process.value,param.value,&req,sizeof(req),&read)||read!=sizeof(req)||req.abi!=UB_ABI||req.bytes!=sizeof(req))fail(L"插件初始化应答无效。");
-        if(req.status!=UB_OK||ret!=UB_OK)fail(L"插件拒绝初始化，状态码："+std::to_wstring(req.status));
+        // A retained plugin with a hook failure still exposes its diagnostic
+        // mapping. Let the GUI validate and open that mapping, without claiming
+        // that filters are active. Version/image/request errors remain fatal.
+        if(req.status!=ret || (ret!=UB_OK && ret!=UB_HOOK_FAILURE))fail(L"插件拒绝初始化，状态码："+std::to_wstring(req.status));
         return pid;
     } catch(const Failure& e) {
         auto msg=e.text;if(e.error)msg+=L"\n"+error_text(e.error);

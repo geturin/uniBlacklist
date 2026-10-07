@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include "protocol.h"
+#include "status_report.h"
 #include "injector.h"
 #include "settings.h"
 
@@ -154,6 +155,7 @@ void tick() {
     else if (snapshot.battle_suspended) state+=L"  当前对战中，拦截暂停。";
     else if (!snapshot.enable) state+=L"  保护开关已关闭。";
     else if (snapshot.policy_ack!=snapshot.policy_revision) state+=L"  等待名单生效。";
+    else if (!UbEffective(snapshot,GetTickCount())) state+=L"  完整保护未生效。";
     set(status_label,state);
     auto detail=L"原搜索 "+std::to_wstring(snapshot.search_count)+L" 次 | 跳过候选 "+std::to_wstring(snapshot.candidate_skips)+
         L" | 拒绝握手 "+std::to_wstring(snapshot.request_rejects)+L" | 拦截发送 "+std::to_wstring(snapshot.send_rejects)+
@@ -192,16 +194,8 @@ void report() {
     OPENFILENAMEW f{};f.lStructSize=sizeof(f);f.hwndOwner=window;f.lpstrFile=path;f.nMaxFile=32768;
     f.lpstrFilter=L"文本文件\0*.txt\0\0";f.lpstrDefExt=L"txt";f.Flags=OFN_OVERWRITEPROMPT|OFN_NOCHANGEDIR;
     if (!GetSaveFileNameW(&f)) return;
-    std::string s="UNI2Blacklist 0.1.0-candidate.1\r\nEXE SHA256: "+std::string(UB_GAME_SHA)+
-        "\r\nSteam DLL SHA256: "+UB_STEAM_SHA+"\r\n";
-    auto field=[&](const char* k,uint32_t v){s+=std::string(k)+": "+std::to_string(v)+"\r\n";};
-    field("pid",pid);field("state",snapshot.state);field("status",snapshot.status);field("hooks_ready",snapshot.network_hooks_ready);
-    field("enabled",snapshot.enable);field("policy_revision",snapshot.policy_revision);field("policy_ack",snapshot.policy_ack);
-    field("scene",snapshot.host_scene);field("battle_suspended",snapshot.battle_suspended);field("blacklist_count",static_cast<uint32_t>(entries.size()));
-    field("search_count",snapshot.search_count);field("candidate_count",snapshot.candidate_count);field("omitted",snapshot.omitted_count);
-    field("candidate_skips",snapshot.candidate_skips);field("request_rejects",snapshot.request_rejects);field("send_rejects",snapshot.send_rejects);
-    field("receive_drops",snapshot.receive_drops);field("metadata_errors",snapshot.metadata_errors);
-    s+="message: "+std::string(snapshot.message_utf8,strnlen(snapshot.message_utf8,256))+"\r\nattach_error: "+UbUtf8(attachment_error)+"\r\n";
+    if (shared && lock_ipc()) {snapshot=*shared;ReleaseMutex(ipc_mutex);}
+    std::string s=UbStatusReport(snapshot,pid,UbUtf8(attachment_error),GetTickCount());
     HANDLE out=CreateFileW(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);DWORD done=0;
     if (out==INVALID_HANDLE_VALUE) {error(L"无法保存状态文件。");return;}
     bool ok=WriteFile(out,s.data(),static_cast<DWORD>(s.size()),&done,nullptr) && done==s.size() && FlushFileBuffers(out);CloseHandle(out);

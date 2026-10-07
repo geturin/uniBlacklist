@@ -35,9 +35,9 @@ inline bool UbPut(uintptr_t address, const void* in, size_t bytes) {
     return true;
 }
 template<class T> inline bool UbSet(uintptr_t address, const T& in) { return UbPut(address,&in,sizeof(in)); }
-inline bool UbExecutable(void* p) {
+inline bool UbExecutable(void* p, bool image_only=true) {
     MEMORY_BASIC_INFORMATION m{};
-    return p && VirtualQuery(p,&m,sizeof(m)) && m.Type==MEM_IMAGE && m.State==MEM_COMMIT &&
+    return p && VirtualQuery(p,&m,sizeof(m)) && (!image_only || m.Type==MEM_IMAGE) && m.State==MEM_COMMIT &&
         !(m.Protect&(PAGE_GUARD|PAGE_NOACCESS)) &&
         (m.Protect&(PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY));
 }

@@ -2,6 +2,12 @@ name: Publish and verify Windows candidate
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Committed candidate package version
+        required: true
+        default: 0.1.0-candidate.2
+        type: string
 
 permissions:
   contents: write
@@ -12,13 +18,15 @@ jobs:
     timeout-minutes: 10
     env:
       GH_TOKEN: ${{ github.token }}
+      PACKAGE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Publish committed packages and download them for verification
         run: |
           python3 - <<'PY'
-          import hashlib, json, os, pathlib, subprocess, tempfile, zipfile
-          version = '0.1.0-candidate.1'
+          import hashlib, json, os, pathlib, re, subprocess, tempfile, zipfile
+          version = os.environ['PACKAGE_VERSION']
+          assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+-candidate\.[0-9]+', version)
           tag = 'v' + version
           original = pathlib.Path('downloads') / version
           repo = os.environ['GITHUB_REPOSITORY']
