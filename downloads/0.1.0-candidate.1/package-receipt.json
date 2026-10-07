@@ -1,0 +1,30 @@
+{
+  "version": "0.1.0-candidate.1",
+  "source_commit": "5bf089d43cb35d0bd37863b225a16bfc584346da",
+  "compiler": "MinGW-w64 GCC 14 i686-w64-mingw32 static runtime",
+  "products": [
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.1-win32.zip",
+      "bytes": 608656,
+      "sha256": "2d15e903dd52cf45897ac2ddee41fb1cc81571dd870b7bb25169258eaf96d186",
+      "file_count": 8
+    },
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.1-source.zip",
+      "bytes": 66796,
+      "sha256": "7344914f47372426070eb39c7c1935997658f06c0d6b6920f602c99ffa07c69a",
+      "file_count": 30
+    }
+  ],
+  "game_execution": false,
+  "native_windows_game_validation": false,
+  "wine_native_control_checks": 33,
+  "wine_gui_operation_checks": 14,
+  "packaged_dll_load_and_reject_check": true,
+  "original_assets_included": false,
+  "test_suite_included": false,
+  "binaries": {
+    "UNI2Blacklist.exe": "ee09824d53b04384549f116908031109522da89082bdf7129ffac22979c8f20b",
+    "uni2-blacklist.dll": "5171e3a7cae34b22d379e29b31f59c39e8853e03cfd1cef5a0bee44b54aa8cbb"
+  }
+}
