@@ -39,6 +39,7 @@ jobs:
             [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
             [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr h, int id);
             [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+            public static IntPtr FindCandidate() { return FindWindow("UNI2BlacklistWindow", null); }
           }
           '@
           $taskConfig = Join-Path $env:LOCALAPPDATA 'UNI2Blacklist'
@@ -47,13 +48,13 @@ jobs:
             $p = Start-Process (Join-Path $taskProduct 'UNI2Blacklist.exe') -WorkingDirectory $taskProduct -PassThru
             for ($i=0; $i -lt 200; $i++) {
               if ($p.HasExited) { throw "GUI exited before window creation: $($p.ExitCode)" }
-              $h = [ProductWindow]::FindWindow('UNI2BlacklistWindow', $null)
+              $h = [ProductWindow]::FindCandidate()
               [uint32]$owner = 0
               if ($h -ne [IntPtr]::Zero) { [void][ProductWindow]::GetWindowThreadProcessId($h, [ref]$owner) }
               if ($owner -eq $p.Id -and [ProductWindow]::GetDlgItem($h,113) -ne [IntPtr]::Zero) { return @{Process=$p; Window=$h} }
               Start-Sleep -Milliseconds 100
             }
-            throw 'GUI window or Wi-Fi control was not created'
+            throw "GUI window or Wi-Fi control was not found; pid=$($p.Id), session=$($p.SessionId), main=$($p.MainWindowHandle), class-handle=$h, owner=$owner"
           }
           function Close-Candidate($app) {
             [void][ProductWindow]::SendMessage($app.Window,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
