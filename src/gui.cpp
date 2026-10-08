@@ -20,9 +20,9 @@
 #include "settings.h"
 
 namespace {
-enum {ID_PROCESS=100,ID_SCAN,ID_ATTACH,ID_ENABLE,ID_CANDIDATES,ID_BLOCK,ID_ID,ID_ALIAS,ID_ADD,ID_BLACKLIST,ID_REMOVE,ID_COPY,ID_REPORT};
+enum {ID_PROCESS=100,ID_SCAN,ID_ATTACH,ID_ENABLE,ID_CANDIDATES,ID_BLOCK,ID_ID,ID_ALIAS,ID_ADD,ID_BLACKLIST,ID_REMOVE,ID_COPY,ID_REPORT,ID_WIFI};
 constexpr UINT WM_ATTACHED=WM_APP+1;
-HWND window,process_box,attach_button,enable_box,status_label,summary_label,candidates,blacklist,id_edit,alias_edit;
+HWND window,process_box,attach_button,enable_box,wifi_box,status_label,summary_label,candidates,blacklist,id_edit,alias_edit;
 HFONT font;
 std::vector<UbProcess> processes;
 std::vector<UbEntry> entries;
@@ -34,6 +34,7 @@ HANDLE map_handle=nullptr,ipc_mutex=nullptr,game_handle=nullptr;
 UbShared* shared=nullptr;
 UbShared snapshot{};
 bool connecting=false,settings_failed=false;
+bool wifi_option=false;
 uint32_t sequence=UINT32_MAX;
 DWORD pid=0;
 std::wstring attachment_error;
@@ -68,7 +69,7 @@ void layout() {
     RECT r{};GetClientRect(window,&r);int w=r.right,h=r.bottom;
     auto move=[](int id,int x,int y,int ww,int hh) {MoveWindow(GetDlgItem(window,id),x,y,ww,hh,TRUE);};
     move(ID_PROCESS,18,18,w-345,220);move(ID_SCAN,w-312,18,112,30);move(ID_ATTACH,w-188,18,170,30);
-    move(ID_ENABLE,18,57,w-36,26);MoveWindow(status_label,18,91,w-36,44,TRUE);
+    move(ID_ENABLE,18,57,w-270,26);move(ID_WIFI,w-240,57,222,26);MoveWindow(status_label,18,91,w-36,44,TRUE);
     MoveWindow(summary_label,18,139,w-36,26,TRUE);
     int table_height=std::max(130,(h-430)*3/5);
     move(ID_CANDIDATES,18,176,w-36,table_height);
@@ -83,6 +84,7 @@ void layout() {
 void policy() {
     if (!shared || !lock_ipc()) return;
     shared->enable=SendMessageW(enable_box,BM_GETCHECK,0,0)==BST_CHECKED && !settings_failed;
+    shared->exclude_wifi=wifi_option && !settings_failed;
     shared->blocked_count=static_cast<uint32_t>(entries.size());
     memset(shared->blocked,0,sizeof(shared->blocked));
     for (size_t i=0;i<entries.size();i++) shared->blocked[i]=entries[i].id;
@@ -186,8 +188,9 @@ void refresh_candidates(DWORD now) {
         else ListView_SetItemText(candidates,int(i),0,const_cast<wchar_t*>(name.c_str()));
         cell(candidates,int(i),1,std::to_wstring(c.steam_id));
         cell(candidates,int(i),2,(c.flags&UB_PING_KNOWN)?std::to_wstring(c.estimated_ping_ms)+L" ms":L"未知");
-        cell(candidates,int(i),3,L"未知 / 未测");cell(candidates,int(i),4,std::to_wstring(c.lobby_id));
-        std::wstring state=contains(c.steam_id)?L"已拉黑 · ":L"未拉黑 · ";
+        cell(candidates,int(i),3,c.connection_type==UB_CONNECTION_WIFI?L"Wi-Fi":c.connection_type==UB_CONNECTION_WIRED?L"有线":L"未知");
+        cell(candidates,int(i),4,std::to_wstring(c.lobby_id));
+        std::wstring state=contains(c.steam_id)?L"已拉黑 · ":wifi_option && (c.flags&UB_WIFI_EXCLUDED)?L"Wi-Fi 排除 · ":L"未拉黑 · ";
         state+=row.in_latest_result?L"本次返回":L"最近出现";
         cell(candidates,int(i),5,state);
         cell(candidates,int(i),6,std::to_wstring(DWORD(now-row.last_seen)/1000)+L" 秒前");
@@ -221,8 +224,8 @@ void tick() {
     std::wstring state=UbWide(std::string(snapshot.message_utf8,strnlen(snapshot.message_utf8,256)));
     if (DWORD(GetTickCount()-snapshot.heartbeat)>3000) state=L"插件心跳过期，不能确认保护有效。";
     else if (snapshot.battle_suspended) state+=L"  当前对战中，拦截暂停。";
-    else if (!snapshot.blocked_count) state+=L"  黑名单为空：持续观察排位搜索，通信不拦截。";
     else if (!snapshot.enable) state+=L"  保护开关已关闭。";
+    else if (!UbHasPolicy(snapshot)) state+=L"  无筛选条件：持续观察排位搜索，通信不拦截。";
     else if (snapshot.policy_ack!=snapshot.policy_revision) state+=L"  等待名单生效。";
     else if (!UbEffective(snapshot,GetTickCount())) state+=L"  完整保护未生效。";
     set(status_label,state);
@@ -310,13 +313,14 @@ LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
             process_box=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,ID_PROCESS);
             control(L"BUTTON",L"查找游戏",BS_PUSHBUTTON|WS_TABSTOP,ID_SCAN);
             attach_button=control(L"BUTTON",L"连接并启用",BS_PUSHBUTTON|WS_TABSTOP,ID_ATTACH);
-            enable_box=control(L"BUTTON",L"启用黑名单（已有对战暂停拦截；关闭此窗口将停止保护）",BS_AUTOCHECKBOX|WS_TABSTOP,ID_ENABLE);
+            enable_box=control(L"BUTTON",L"启用拦截（已有对战暂停；关闭窗口停止保护）",BS_AUTOCHECKBOX|WS_TABSTOP,ID_ENABLE);
             SendMessageW(enable_box,BM_SETCHECK,BST_CHECKED,0);
+            wifi_box=control(L"BUTTON",L"排除 Wi-Fi 玩家",BS_AUTOCHECKBOX|WS_TABSTOP,ID_WIFI);
             status_label=control(L"STATIC",L"",SS_LEFT,204);summary_label=control(L"STATIC",L"最近2分钟出现的玩家：等待游戏自然刷新列表",SS_LEFT,205);
             candidates=control(WC_LISTVIEWW,L"",LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP,ID_CANDIDATES);
             ListView_SetExtendedListViewStyle(candidates,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
-            column(candidates,0,L"玩家名（暂未知）",180);column(candidates,1,L"SteamID64",165);column(candidates,2,L"估计延迟（暂未知）",110);
-            column(candidates,3,L"实际 RTT / 丢包率",140);column(candidates,4,L"最近 LobbyID",155);column(candidates,5,L"名单 / 搜索结果",170);
+            column(candidates,0,L"玩家名",180);column(candidates,1,L"SteamID64",165);column(candidates,2,L"估计延迟",110);
+            column(candidates,3,L"Wi-Fi",90);column(candidates,4,L"最近 LobbyID",155);column(candidates,5,L"名单 / 搜索结果",190);
             column(candidates,6,L"最近出现",105);
             control(L"BUTTON",L"拉黑选中玩家",BS_PUSHBUTTON|WS_TABSTOP,ID_BLOCK);control(L"BUTTON",L"复制 SteamID64",BS_PUSHBUTTON|WS_TABSTOP,ID_COPY);
             control(L"BUTTON",L"保存诊断状态",BS_PUSHBUTTON|WS_TABSTOP,ID_REPORT);
@@ -327,8 +331,9 @@ LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
             blacklist=control(WC_LISTVIEWW,L"",LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP,ID_BLACKLIST);
             ListView_SetExtendedListViewStyle(blacklist,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
             column(blacklist,0,L"备注",280);column(blacklist,1,L"SteamID64",230);control(L"BUTTON",L"移除选中玩家",BS_PUSHBUTTON|WS_TABSTOP,ID_REMOVE);
-            control(L"STATIC",L"玩家最后出现后保留2分钟；本轮停用额外 Steam 元数据查询，姓名和延迟暂显示未知。最近出现不代表仍待机。",SS_LEFT,203);
-            try {entries=UbLoadSettings();} catch(const std::exception& e) {settings_failed=true;SendMessageW(enable_box,BM_SETCHECK,BST_UNCHECKED,0);error(UbWide(e.what()));}
+            control(L"STATIC",L"最近玩家保留2分钟；延迟是 Steam 估计值。Wi-Fi 未知时放行；临时排除不写入黑名单。最近出现不代表仍待机。",SS_LEFT,203);
+            try {entries=UbLoadSettings();wifi_option=UbLoadWifiOption();SendMessageW(wifi_box,BM_SETCHECK,wifi_option?BST_CHECKED:BST_UNCHECKED,0);}
+            catch(const std::exception& e) {settings_failed=true;SendMessageW(enable_box,BM_SETCHECK,BST_UNCHECKED,0);EnableWindow(wifi_box,FALSE);error(UbWide(e.what()));}
             rebuild_blacklist();scan();layout();SetTimer(h,1,500,nullptr);return 0;
         }
         case WM_SIZE:layout();return 0;
@@ -340,6 +345,12 @@ LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
             case ID_SCAN:scan();break;
             case ID_ATTACH:connect();break;
             case ID_ENABLE:policy();break;
+            case ID_WIFI: {
+                bool requested=SendMessageW(wifi_box,BM_GETCHECK,0,0)==BST_CHECKED;
+                try {UbSaveWifiOption(requested);wifi_option=requested;}
+                catch(...) {SendMessageW(wifi_box,BM_SETCHECK,wifi_option?BST_CHECKED:BST_UNCHECKED,0);throw;}
+                policy();rows_dirty=true;refresh_candidates(GetTickCount());break;
+            }
             case ID_BLOCK: {int n=ListView_GetNextItem(candidates,-1,LVNI_SELECTED);
                 if (n>=0 && size_t(n)<rows.size()) add(rows[size_t(n)].steam_id,UbWide(rows[size_t(n)].name_utf8));
                 else error(L"请在搜索结果中选择一位玩家。");

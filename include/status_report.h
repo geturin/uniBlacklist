@@ -11,11 +11,13 @@ inline std::string UbStatusReport(const UbShared& snapshot,DWORD pid,const std::
     field("scene_rva",UB_SCENE_RVA);
     field("connected",connected);field("pid",pid);field("state",snapshot.state);field("status",snapshot.status);field("hooks_ready",snapshot.network_hooks_ready);
     field("requested_enabled",snapshot.enable);
-    field("native_filter_active",connected && snapshot.enable && snapshot.blocked_count && snapshot.state==UB_READY && snapshot.status==UB_OK && !snapshot.battle_suspended && snapshot.filter_active && DWORD(now-snapshot.heartbeat)<=3000 && snapshot.policy_ack==snapshot.policy_revision);
+    field("native_filter_active",connected && snapshot.enable && UbHasPolicy(snapshot) && snapshot.state==UB_READY && snapshot.status==UB_OK && !snapshot.battle_suspended && snapshot.filter_active && DWORD(now-snapshot.heartbeat)<=3000 && snapshot.policy_ack==snapshot.policy_revision);
     field("effective_enabled",connected && UbEffective(snapshot,now));
     field("heartbeat_age_ms",DWORD(now-snapshot.heartbeat));
     field("policy_revision",snapshot.policy_revision);field("policy_ack",snapshot.policy_ack);
     field("scene",snapshot.host_scene);field("battle_suspended",snapshot.battle_suspended);field("blacklist_count",snapshot.blocked_count);
+    field("exclude_wifi",snapshot.exclude_wifi);field("wifi_cache_count",snapshot.wifi_cache_count);
+    field("ping_queries",snapshot.ping_queries);field("ping_known_count",snapshot.ping_known_count);
     field("search_count",snapshot.search_count);field("candidate_count",snapshot.candidate_count);field("omitted",snapshot.omitted_count);
     field("candidate_skips",snapshot.candidate_skips);field("request_rejects",snapshot.request_rejects);field("send_rejects",snapshot.send_rejects);
     field("receive_drops",snapshot.receive_drops);field("metadata_errors",snapshot.metadata_errors);

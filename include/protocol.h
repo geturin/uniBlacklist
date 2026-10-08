@@ -2,8 +2,8 @@
 #include <windows.h>
 #include <stdint.h>
 
-constexpr uint32_t UB_ABI = 2;
-constexpr char UB_VERSION[] = "0.1.0-candidate.4";
+constexpr uint32_t UB_ABI = 3;
+constexpr char UB_VERSION[] = "0.1.0-candidate.5";
 constexpr uint32_t UB_MAGIC = 0x31424e55;
 constexpr uint32_t UB_MAX_BLOCKED = 256;
 constexpr uint32_t UB_MAX_CANDIDATES = 128;
@@ -15,7 +15,8 @@ enum UbState : uint32_t { UB_STARTING, UB_READY, UB_UNSUPPORTED, UB_ERROR };
 enum UbStatus : uint32_t { UB_OK, UB_BAD_REQUEST, UB_WRONG_IMAGE, UB_SIGNATURE,
     UB_HOOK_FAILURE, UB_IPC_FAILURE };
 enum UbCandidateFlags : uint32_t { UB_NAME_KNOWN=1, UB_PING_KNOWN=2,
-    UB_BLOCKED=4, UB_ENDPOINT_KNOWN=8, UB_QUERY_TRUE=16 };
+    UB_BLOCKED=4, UB_ENDPOINT_KNOWN=8, UB_QUERY_TRUE=16, UB_WIFI_EXCLUDED=32 };
+enum UbConnectionType : uint8_t { UB_CONNECTION_UNKNOWN, UB_CONNECTION_WIRED, UB_CONNECTION_WIFI };
 enum UbHookMethod : uint32_t { UB_HOOK_NONE, UB_HOOK_MINHOOK, UB_HOOK_VTABLE };
 enum UbHookStage : uint32_t { UB_STAGE_NONE, UB_STAGE_READY, UB_STAGE_CONTEXT,
     UB_STAGE_TARGET, UB_STAGE_MH_INIT, UB_STAGE_MH_CREATE, UB_STAGE_MH_QUEUE,
@@ -40,7 +41,8 @@ struct UbCandidate {
     uint8_t relay;
     uint8_t active;
     char name_utf8[129];
-    uint8_t reserved[3];
+    uint8_t connection_type;
+    uint8_t reserved[2];
 };
 struct UbHookDiagnostic {
     uint32_t method, stage, index, slot;
@@ -64,6 +66,7 @@ struct UbShared {
     uint32_t candidate_skips, request_rejects, send_rejects, receive_drops;
     uint32_t network_hooks_ready, battle_suspended, capture_pending, client_tick;
     uint32_t filter_active, effective_enabled;
+    uint32_t exclude_wifi, wifi_cache_count, ping_queries, ping_known_count;
     UbHookDiagnostic hook_diagnostics[3]; // Native game, legacy P2P, Messages002.
     char message_utf8[256];
     UbCandidate candidates[UB_MAX_CANDIDATES];
@@ -74,11 +77,12 @@ static_assert(sizeof(UbCandidate)==168, "stable PE32 IPC candidate layout");
 static_assert(alignof(UbShared)>=8, "64-bit identity alignment");
 
 inline void UbNames(DWORD pid, wchar_t* mapping, wchar_t* mutex) {
-    wsprintfW(mapping, L"Local\\UNI2Blacklist-v2-%lu", static_cast<unsigned long>(pid));
-    wsprintfW(mutex, L"Local\\UNI2Blacklist-v2-%lu-mutex", static_cast<unsigned long>(pid));
+    wsprintfW(mapping, L"Local\\UNI2Blacklist-v3-%lu", static_cast<unsigned long>(pid));
+    wsprintfW(mutex, L"Local\\UNI2Blacklist-v3-%lu-mutex", static_cast<unsigned long>(pid));
 }
+inline bool UbHasPolicy(const UbShared& s) { return s.blocked_count || s.exclude_wifi; }
 inline bool UbEffective(const UbShared& s,DWORD now) {
-    return s.effective_enabled && s.enable && s.blocked_count && s.state==UB_READY && s.status==UB_OK &&
+    return s.effective_enabled && s.enable && UbHasPolicy(s) && s.state==UB_READY && s.status==UB_OK &&
         s.network_hooks_ready==3 && !s.battle_suspended &&
         s.policy_ack==s.policy_revision && DWORD(now-s.heartbeat)<=3000;
 }

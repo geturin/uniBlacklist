@@ -1,4 +1,4 @@
-# 首版原生接口合同
+# 原生接口合同
 
 依据：指定 SHA-256 的 EXE、配套 Steam DLL、REA/Ghidra 静态反编译及 x86 指令检查。地址为该 EXE 优先基址 `0x400000` 下的 VA；实现使用 RVA 加实际装载基址。不是仅依据通用 Steam 文档猜地址。`profile.json` 和 `include/profile.h` 保存五个入口的 32 字节及 HIGHLOW 重定位掩码，加载时必须匹配。
 
@@ -50,7 +50,7 @@ Steam 官方接口依据为 Valve source-sdk-2013 固定提交 `0759e2e8e179d535
 
 每个槽位以 VirtualProtect 临时取得写权限（原页可执行时保留执行权限），InterlockedCompareExchangePointer 只在值仍等于预期原函数时改写，并恢复原页权限；首个错误保留，已持有槽位按反序回退，其他插件的指针不覆盖。完整组成功后才置现代位2；任何失败令所有拦截放行，不回退到猜测的新 API 或不完整握手保护。安装结束及每100毫秒核对缓存 interface、表与三槽位归属；变化就锁存错误、停用。原 DLL 与保存的函数指针保留至进程退出。
 
-IPC ABI 升至2（Local\UNI2Blacklist-v2-PID），不能与旧 GUI/DLL 混用；升级需重启游戏。挂钩失败后映射仍有效时，重新打开同版本 GUI 可以只连接诊断状态，不能把“已连接”当成过滤成功。分组诊断的 native index0–4=search/join/request/chat/members，legacy index0–2=Send/Read/Accept（slot0/2/3），messages002 index即slot，未知值 UINT32_MAX。报告 memory_* 对应目标函数页，slot_memory_* 对应取得写权限前的表页；两者不能混读。MH 阶段的 minhook_status 是原 MinHook 返回值；验证拒绝使用合成 Win32 INVALID_ADDRESS/INVALID_DATA/RETRY，权限操作错误为 GetLastError 原值。cleanup_error 按该组 method 为 MinHook 状态或 Win32 状态，restore_error 总为页权限恢复的 Win32 状态。
+当前 IPC ABI 为3（Local\UNI2Blacklist-v3-PID），不能与旧 GUI/DLL 混用；升级需重启游戏。挂钩失败后映射仍有效时，重新打开同版本 GUI 可以只连接诊断状态，不能把“已连接”当成过滤成功。分组诊断的 native index0–4=search/join/request/chat/members，legacy index0–2=Send/Read/Accept（slot0/2/3），messages002 index即slot，未知值 UINT32_MAX。报告 memory_* 对应目标函数页，slot_memory_* 对应取得写权限前的表页；两者不能混读。MH 阶段的 minhook_status 是原 MinHook 返回值；验证拒绝使用合成 Win32 INVALID_ADDRESS/INVALID_DATA/RETRY，权限操作错误为 GetLastError 原值。cleanup_error 按该组 method 为 MinHook 状态或 Win32 状态，restore_error 总为页权限恢复的 Win32 状态。
 
 ## 场景与未完成证据
 
@@ -76,3 +76,35 @@ candidate.4 全局 `0x9a4a84`（RVA `0x5a4a84`）是原外层场景；candidate.
 ## candidate.4 EXE 适配
 
 支持指纹更新为 `4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9`，GUI与DLL共用该常量。场景报告与暂停拦截共用 `UB_SCENE_RVA=0x5a4a84`，旧 RVA 不继续读取。五个 hook 的VA/ABI/掩码不变，signature32按新文件重新生成；Steam上下文及接口约定仍沿用，Steam DLL继续严格校验原SHA。完整比较与验证边界见 [EXE适配记录](EXE_UPDATE.zh-CN.md)。此适配不代表既有快速匹配闪退已消除。
+
+
+## candidate.5 名称、估计延迟与 Wi-Fi
+
+本轮使用同一新版EXE指纹；保留原搜索、场景及通信ABI。共享候选结构仍168字节，把一个保留字节用于 connection_type（0未知、1有线、2Wi-Fi）；共享块新增 exclude_wifi/wifi_cache_count/ping_queries/ping_known_count，故整体ABI升至3。启动拒绝ABI2；必须重启游戏升级，不能热替换旧DLL。
+
+搜索 row+0x30 是44字节名字缓存的指针，row+0x34 是 CustomData1 缓存指针。`0x4f5470` 已写缓存，CustomData1 缓存数据1024字节且+0x400长度为0x400。`0x6b35a0` 使用同一名字缓存，`0x6b3530` 返回同一CustomData缓存。`0x4e0730`／`0x4e0880` 先把Steam UTF-8名字转UTF-16，截20个UTF-16单位，再编码CP_ACP；`0x4ff460` 最多保留40字节。本插件只读取该缓存，CP_ACP转UTF-8，不在搜索回调新增PersonaName调用。无NUL、空或解码失败为未知；恰40字节末尾截断的多字节字符最多丢弃1个末字节后再检查。
+
+网卡分类原函数 `0x4de070`；原值0有线、1Wi-Fi，保存在 `0x482301c`。不是信号档位，也不通过IP推测。解析入口：
+
+| 格式 | 原生产／消费 | 账号与连接值位置 |
+| --- | --- | --- |
+| 排位 | 0x5f9e40／0x5f9ac0 | 132字节记录；owner全64位大端在0x1a；Wi-Fi大端u16在 **0x78**，解析对象+0x144。相邻0x76、0x7a不是该字段 |
+| 房间 | 0x5f8aa0／0x5f8610 | 外层u16大端长度272，随后Base64；解码202字节，owner在0x24、Wi-Fi u16在0xc0，解析对象+0x234；不能在外层直接读这个偏移 |
+
+房间的 Base64 编／解码函数为0x4d58e0／0x4d5a60，不是压缩。原 `0x437260`／`0x437320` 处理64位网络字节序。Unicorn 中执行原排位和房间生产函数，各传原值0和1；使用相邻排位字段9/13作为辨别控制，证明0x78读取确为Wi-Fi而非0x7a。4组输出与插件解析均验证通过。执行只在隔离的内存映像与自造数据上，没有启动原EXE进程。原机器码、完整反编译及输出样本不提交。
+
+解析要求当前行的完整SteamID64与嵌入owner一致，排位／房间仅一种匹配；格式、长度、Base64字母／规范填充、owner绑定或原值不符均未知。Wi-Fi筛选共用 blocked()，不修改id_count或持久名单。缓存4096账号，120秒；未知、有线或同一快照冲突解除临时分类，满时淘汰最旧。0个候选不会停止规则；关闭规则、总开关、GUI心跳过期、战斗或安装失败仍按原条件放行。
+
+估计延迟来源是 `0x4ef6b0` 使用的 RoomPropertyKey_PingLocation 与 Utils004。控制线程只读取已初始化的+8接口指针，检查相关公开槽位为已提交可执行地址（支持现有运行时thunk），不ContextInit、不Steam初始化、不另发RequestLobbyData／RequestLobbyList。配套固定Steam DLL导出RVA与指令ABI再次确认：
+
+| flat export RVA | 接口槽位／ABI |
+| --- | --- |
+| 0x19a0 GetLobbyData | Matchmaking009 slot19；cdecl(self,lobby64,key) |
+| 0x1df0 ParsePingLocationString | Utils004 slot6；cdecl(self,string,512字节输出)，bool |
+| 0x1590 EstimatePingTimeFromLocalHost | Utils004 slot4；cdecl(self,location)，signed int |
+
+加载时检查导出确在固定DLL相应RVA。临时自建宿主还加载原配套DLL，实际调用这些flat wrapper，经自建thiscall槽位检查完整ID、字符串、512字节输出及64ms返回，没有连接Steam。
+
+每100ms最多处理一位复制快照，每账号+LobbyID至少5秒再次读取；不保存原搜索row指针，SDK调用不持策略／快照锁。返回写入前重新核对槽位、账号、LobbyID和observed_tick，防止跨槽复用；战斗暂停新增读取。同账号／房间的新搜索可沿用已有估计直到刷新，不因背景更新延长候选保留时间。缺缓存／接口未就绪／解析失败／负返回是未知，0ms合法。
+
+界面显示Steam原始毫秒估计，**不套用原游戏正估计减28ms再转微秒的处理，也不作为实测RTT**。当前实现没有主动ping探测或丢包率测量，RTT／丢包列改为Wi-Fi。新来源与限频检查不等于真实Steam环境的线程／生命周期验证；原游戏实测仍由用户完成。

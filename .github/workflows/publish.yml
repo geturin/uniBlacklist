@@ -6,14 +6,109 @@ on:
       version:
         description: Committed candidate package version
         required: true
-        default: 0.1.0-candidate.4
+        default: 0.1.0-candidate.5
         type: string
 
 permissions:
   contents: write
 
 jobs:
+  windows-product:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      PACKAGE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify packaged hashes and extract candidate
+        shell: pwsh
+        run: |
+          python -c "import os,pathlib,json,hashlib,zipfile; v=os.environ['PACKAGE_VERSION']; p=pathlib.Path('downloads')/v; r=json.loads((p/'package-receipt.json').read_text()); [(_ for _ in ()).throw(AssertionError(x['filename'])) for x in r['products'] if hashlib.sha256((p/x['filename']).read_bytes()).hexdigest()!=x['sha256']]; z=zipfile.ZipFile(p/('UNI2Blacklist-'+v+'-win32.zip')); assert z.testzip() is None; z.extractall('windows-candidate')"
+      - name: Exercise actual Windows GUI and fail-closed DLL entry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $taskProduct = (Resolve-Path "windows-candidate/UNI2Blacklist-$env:PACKAGE_VERSION-win32").Path
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class ProductWindow {
+            [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string n);
+            [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+            [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr h, int id);
+            [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+          }
+          '@
+          $taskConfig = Join-Path $env:LOCALAPPDATA 'UNI2Blacklist'
+          if (Test-Path $taskConfig) { throw 'Product configuration already exists on isolated runner' }
+          function Open-Candidate {
+            $p = Start-Process (Join-Path $taskProduct 'UNI2Blacklist.exe') -WorkingDirectory $taskProduct -PassThru
+            for ($i=0; $i -lt 200; $i++) {
+              if ($p.HasExited) { throw "GUI exited before window creation: $($p.ExitCode)" }
+              $h = [ProductWindow]::FindWindow('UNI2BlacklistWindow', $null)
+              [uint32]$owner = 0
+              if ($h -ne [IntPtr]::Zero) { [void][ProductWindow]::GetWindowThreadProcessId($h, [ref]$owner) }
+              if ($owner -eq $p.Id -and [ProductWindow]::GetDlgItem($h,113) -ne [IntPtr]::Zero) { return @{Process=$p; Window=$h} }
+              Start-Sleep -Milliseconds 100
+            }
+            throw 'GUI window or Wi-Fi control was not created'
+          }
+          function Close-Candidate($app) {
+            [void][ProductWindow]::SendMessage($app.Window,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
+            if (-not $app.Process.WaitForExit(10000) -or $app.Process.ExitCode -ne 0) { throw 'GUI did not exit normally' }
+          }
+          $app = Open-Candidate
+          try {
+            $check = [ProductWindow]::GetDlgItem($app.Window,113)
+            if ([ProductWindow]::SendMessage($check,0xf0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -ne 0) { throw 'Wi-Fi default is not off' }
+            [void][ProductWindow]::SendMessage($check,0xf5,[IntPtr]::Zero,[IntPtr]::Zero)
+            if ([IO.File]::ReadAllText((Join-Path $taskConfig 'options.ini')) -cne "exclude_wifi=1`n") { throw 'Checkbox was not saved' }
+            if (Test-Path (Join-Path $taskConfig 'blacklist.tsv')) { throw 'Wi-Fi option wrote blacklist accounts' }
+          } finally { Close-Candidate $app }
+          $app = Open-Candidate
+          try {
+            $check = [ProductWindow]::GetDlgItem($app.Window,113)
+            if ([ProductWindow]::SendMessage($check,0xf0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -ne 1) { throw 'Wi-Fi option was not restored' }
+            [void][ProductWindow]::SendMessage($check,0xf5,[IntPtr]::Zero,[IntPtr]::Zero)
+            if ([IO.File]::ReadAllText((Join-Path $taskConfig 'options.ini')) -cne "exclude_wifi=0`n") { throw 'Uncheck was not saved' }
+          } finally { Close-Candidate $app }
+          $taskProbe = @'
+          $ErrorActionPreference = 'Stop'
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public static class CandidateDll {
+            [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr LoadLibrary(string p);
+            [DllImport("kernel32.dll", CharSet=CharSet.Ansi)] public static extern IntPtr GetProcAddress(IntPtr h,string n);
+            [DllImport("kernel32.dll")] public static extern bool FreeLibrary(IntPtr h);
+            [UnmanagedFunctionPointer(CallingConvention.StdCall)] public delegate uint Start(IntPtr p);
+          }
+          "@
+          $m=[CandidateDll]::LoadLibrary($env:UB_PRODUCT_DLL)
+          if ($m -eq [IntPtr]::Zero) { throw "DLL load failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+          $f=[Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer([CandidateDll]::GetProcAddress($m,'BlacklistStart'),[type][CandidateDll+Start])
+          if ($f.Invoke([IntPtr]::Zero) -ne 1) { throw 'Null request was not rejected' }
+          $p=[Runtime.InteropServices.Marshal]::AllocHGlobal(16)
+          try {
+            [Runtime.InteropServices.Marshal]::WriteInt32($p,0,16)
+            [Runtime.InteropServices.Marshal]::WriteInt32($p,4,2)
+            if ($f.Invoke($p) -ne 1) { throw 'Old ABI request was not rejected' }
+            [Runtime.InteropServices.Marshal]::WriteInt32($p,4,3)
+            [Runtime.InteropServices.Marshal]::WriteInt32($p,8,-1)
+            if ($f.Invoke($p) -ne 2 -or [Runtime.InteropServices.Marshal]::ReadInt32($p,8) -ne 2) { throw 'Non-game host was not rejected' }
+          } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($p); [void][CandidateDll]::FreeLibrary($m) }
+          Write-Output 'Windows PE32 DLL load, actual export, null/ABI2/non-game rejection: passed'
+          '@
+          $env:UB_PRODUCT_DLL = Join-Path $taskProduct 'uni2-blacklist.dll'
+          $taskProbe | Set-Content -Encoding utf8 'windows-candidate/dll-probe.ps1'
+          & "$env:WINDIR/SysWOW64/WindowsPowerShell/v1.0/powershell.exe" -NoProfile -ExecutionPolicy Bypass -File 'windows-candidate/dll-probe.ps1'
+          if ($LASTEXITCODE -ne 0) { throw "PE32 DLL check failed: $LASTEXITCODE" }
+          Write-Output 'Windows GUI default/toggle/persistence/restart/uncheck/no-blacklist-write/normal-exit: passed'
+          Write-Output 'Original game and live Steam interfaces were not started. Native Windows gameplay remains user validation.'
   publish:
+    needs: windows-product
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -72,6 +167,11 @@ jobs:
           delivery = dict(repository=repo, tag=tag, publication_commit=commit,
                           source_commit=receipt['source_commit'], products=verify(destination),
                           authorized_download_verified=True, source_without_test_suite=True,
+                          native_windows_product_validation=True,
+                          native_windows_runner='windows-2022',
+                          native_windows_scope=['actual GUI start/default Wi-Fi option/toggle/persistence/restart/uncheck/normal exit',
+                                                'actual PE32 DLL load and exported null/ABI2/non-game rejection'],
+                          workflow_run_url=f"https://github.com/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
                           original_game_execution=False, native_windows_game_validation=False)
           proof = destination / 'delivery-receipt.json'
           proof.write_text(json.dumps(delivery, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')

@@ -94,3 +94,37 @@ void UbSaveSettings(const std::vector<UbEntry>& entries) {
         DeleteFileW(temp.c_str());throw std::runtime_error("黑名单保存失败；旧文件保留。");
     }
 }
+namespace {
+std::wstring wifi_path() {
+    auto path=UbSettingsPath();
+    return path.substr(0,path.find_last_of(L'\\')+1)+L"options.ini";
+}
+}
+bool UbLoadWifiOption() {
+    auto path=wifi_path();
+    HANDLE f=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if (f==INVALID_HANDLE_VALUE) {
+        if (GetLastError()==ERROR_FILE_NOT_FOUND) return false;
+        throw std::runtime_error("无法读取 Wi-Fi 筛选选项；原文件保留。");
+    }
+    char bytes[64]{};DWORD done=0;LARGE_INTEGER size{};
+    bool ok=GetFileSizeEx(f,&size) && size.QuadPart>0 && size.QuadPart<64 &&
+        ReadFile(f,bytes,sizeof(bytes),&done,nullptr) && done==size.QuadPart;
+    CloseHandle(f);
+    if (ok && std::string(bytes,done)=="exclude_wifi=0\n") return false;
+    if (ok && std::string(bytes,done)=="exclude_wifi=1\n") return true;
+    throw std::runtime_error("Wi-Fi 筛选选项损坏；原文件保留，请修复 options.ini 后重开程序。");
+}
+void UbSaveWifiOption(bool exclude) {
+    auto target=wifi_path(),temp=target+L".tmp";
+    const char* bytes=exclude?"exclude_wifi=1\n":"exclude_wifi=0\n";
+    constexpr DWORD length=15;
+    HANDLE f=CreateFileW(temp.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if (f==INVALID_HANDLE_VALUE) throw std::runtime_error("无法写入 Wi-Fi 筛选选项。");
+    DWORD done=0;
+    bool ok=WriteFile(f,bytes,length,&done,nullptr) && done==length && FlushFileBuffers(f);
+    CloseHandle(f);
+    if (!ok || !MoveFileExW(temp.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(temp.c_str());throw std::runtime_error("Wi-Fi 筛选选项保存失败；旧文件保留。");
+    }
+}

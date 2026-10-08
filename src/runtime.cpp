@@ -12,6 +12,8 @@
 #include "profile.h"
 #include "memory.h"
 #include "fault_trace.h"
+#include "connection_metadata.h"
+#include "wifi_cache.h"
 #include "MinHook.h"
 
 static_assert(sizeof(void*)==4,"only x86 ABI supported");
@@ -32,6 +34,8 @@ SRWLOCK policy_lock=SRWLOCK_INIT;
 uint64_t ids[UB_MAX_BLOCKED]{};
 uint32_t id_count=0;
 bool enabled=false;
+bool exclude_wifi=false;
+UbWifiCache wifi_peers;
 DWORD client_tick=0;
 volatile LONG skips=0,rejects=0,sends=0,drops=0,errors=0;
 SRWLOCK capture_lock=SRWLOCK_INIT;
@@ -62,8 +66,9 @@ bool battle() {
 bool blocked(uint64_t id) {
     if (!UbPlayerId(id) || InterlockedCompareExchange(&ready,0,0)!=1 || battle()) return false;
     AcquireSRWLockShared(&policy_lock);
-    bool found=enabled && DWORD(GetTickCount()-client_tick)<10000 &&
-        std::binary_search(ids,ids+id_count,id);
+    DWORD now=GetTickCount();
+    bool found=enabled && DWORD(now-client_tick)<10000 &&
+        (std::binary_search(ids,ids+id_count,id) || (exclude_wifi && wifi_peers.contains(id,now)));
     ReleaseSRWLockShared(&policy_lock);
     return found;
 }
@@ -114,17 +119,79 @@ uint64_t owner(uint64_t lobby) {
     uint64_t id=lobby_owner(mm,lobby);
     return UbPlayerId(id)?id:0;
 }
-// Search observations deliberately make no additional Steam SDK calls.
-// Names and ping remain unknown until their safe source is established.
-void metadata(UbCandidate& c) {
+using ParsePing=bool (__cdecl*)(void*,const char*,void*);
+using EstimatePing=int (__cdecl*)(void*,const void*);
+ParsePing parse_ping=nullptr;
+EstimatePing estimate_ping=nullptr;
+uint32_t ping_queries=0;
+struct PingCache {uint64_t id=0,lobby=0;DWORD tick=0;int value=-1;bool used=false;};
+PingCache ping_cache[UB_MAX_CANDIDATES]{};
+uint32_t ping_cursor=0;
+void* initialized_interface(uint32_t rva,unsigned slot) {
+    void* object=context(rva);uintptr_t table=0,method=0;
+    if (!object || !UbGet(reinterpret_cast<uintptr_t>(object),table) || !table ||
+        !UbGet(table+slot*4,method) || !UbExecutable(reinterpret_cast<void*>(method),false)) return nullptr;
+    return object; // Do not call ContextInit or initialize Steam from our worker.
+}
+int cached_ping(uint64_t lobby) {
+    if (!lobby_data || !parse_ping || !estimate_ping) return -1;
+    void* matchmaking=initialized_interface(0x5f9774,19);
+    void* utils=initialized_interface(0x5f97a4,6);
+    uintptr_t table=0,method=0;
+    if (!matchmaking || !utils || !UbGet(reinterpret_cast<uintptr_t>(utils),table) ||
+        !UbGet(table+16,method) || !UbExecutable(reinterpret_cast<void*>(method),false)) return -1;
+    char location_text[1024]{};
+    ++ping_queries;
+    if (!bounded_string(lobby_data(matchmaking,lobby,"RoomPropertyKey_PingLocation"),location_text,sizeof(location_text)) ||
+        !location_text[0]) return -1;
+    alignas(8) uint8_t location[512]{};
+    if (!parse_ping(utils,location_text,location)) return -1;
+    int value=estimate_ping(utils,location);
+    return value>=0?value:-1; // Original Steam estimate, without the game's -28 ms adjustment.
+}
+void enrich_ping() {
+    if (battle()) return;
+    // One copied candidate per 100 ms iteration, cached for 5 seconds. No game
+    // row pointer survives the producer callback; no SDK call holds either lock.
+    UbCandidate candidate{};bool picked=false;uint32_t index=0;
+    AcquireSRWLockShared(&capture_lock);
+    if (capture_count) {
+        index=(ping_cursor++)%capture_count;candidate=capture[index];picked=true;
+    }
+    ReleaseSRWLockShared(&capture_lock);
+    if (!picked || !UbPlayerId(candidate.steam_id) ||
+        DWORD(GetTickCount()-candidate.observed_tick)>=UB_WIFI_RETENTION_MS) return;
+    auto found=std::find_if(std::begin(ping_cache),std::end(ping_cache),[&](const PingCache& p){
+        return p.used && p.id==candidate.steam_id && p.lobby==candidate.lobby_id;
+    });
+    DWORD now=GetTickCount();
+    if (found==std::end(ping_cache)) {
+        found=std::find_if(std::begin(ping_cache),std::end(ping_cache),[](const PingCache& p){return !p.used;});
+        if (found==std::end(ping_cache)) found=std::max_element(std::begin(ping_cache),std::end(ping_cache),[now](const PingCache& a,const PingCache& b){return DWORD(now-a.tick)<DWORD(now-b.tick);});
+        *found={candidate.steam_id,candidate.lobby_id,now,cached_ping(candidate.lobby_id),true};
+    } else if (DWORD(now-found->tick)>=5000) {found->tick=now;found->value=cached_ping(candidate.lobby_id);}
+    AcquireSRWLockExclusive(&capture_lock);
+    // Reject a late result for a different snapshot/slot, including reused rows.
+    if (index<capture_count && capture[index].steam_id==candidate.steam_id &&
+        capture[index].lobby_id==candidate.lobby_id && capture[index].observed_tick==candidate.observed_tick) {
+        auto& current=capture[index];uint32_t flags=current.flags&~UB_PING_KNOWN;
+        if (found->value>=0) flags|=UB_PING_KNOWN;
+        if (current.estimated_ping_ms!=found->value || current.flags!=flags) {
+            current.estimated_ping_ms=found->value;current.flags=flags;captured=true;
+        }
+    }
+    ReleaseSRWLockExclusive(&capture_lock);
+}
+// The producer only copies its own completed cache; no added Steam SDK calls.
+void metadata(uintptr_t row,UbCandidate& c) {
     c.estimated_ping_ms=-1;c.observed_tick=GetTickCount();
-    if (blocked(c.steam_id)) c.flags|=UB_BLOCKED;
+    UbReadCachedName(row,c);UbReadConnection(row,c);
 }
 
 bool policy_requested() {
     DWORD saved=GetLastError();
     AcquireSRWLockShared(&policy_lock);
-    bool active=enabled && id_count!=0 && DWORD(GetTickCount()-client_tick)<10000;
+    bool active=enabled && (id_count!=0 || exclude_wifi) && DWORD(GetTickCount()-client_tick)<10000;
     ReleaseSRWLockShared(&policy_lock);
     SetLastError(saved);return active;
 }
@@ -155,7 +222,7 @@ __attribute__((noinline)) void capture_search(void* self) {
     if (count && !UbRead(index,before.data(),count*4)) {
         InterlockedIncrement(&errors);return;
     }
-    std::vector<UbCandidate> found(UB_MAX_CANDIDATES);
+    std::vector<UbCandidate> found(count);
     after.reserve(count);
     uint32_t n=0,extra=0;
     bool valid=true;
@@ -168,11 +235,44 @@ __attribute__((noinline)) void capture_search(void* self) {
             !bounded_string(reinterpret_cast<char*>(row),lobby,sizeof(lobby))) {valid=false;break;}
         UbCandidate c{};c.steam_id=id;c.lobby_id=decimal(lobby);
         if (!c.lobby_id) {valid=false;break;}
-        metadata(c);
-        if (n<UB_MAX_CANDIDATES) found[n++]=c;else ++extra;
-        if (!blocked(id)) after.push_back(slot);
+        metadata(row,c);found[n++]=c;
     }
     if (!valid) {InterlockedIncrement(&errors);return;}
+    // Preserve an owned cached estimate while the worker refreshes the same peer.
+    // This does not add Steam calls to the producer callback.
+    AcquireSRWLockShared(&capture_lock);
+    for (auto& c:found) for (uint32_t j=0;j<capture_count;j++) {
+        const auto& prior=capture[j];
+        if (prior.steam_id==c.steam_id && prior.lobby_id==c.lobby_id && (prior.flags&UB_PING_KNOWN)) {
+            c.estimated_ping_ms=prior.estimated_ping_ms;c.flags|=UB_PING_KNOWN;break;
+        }
+    }
+    ReleaseSRWLockShared(&capture_lock);
+    // Publish connection classifications only after the whole producer snapshot
+    // passed validation. Conflicting lobby rows for one account become unknown.
+    DWORD now=GetTickCount();
+    std::vector<UbWifiPeer> observations;observations.reserve(found.size());
+    for (const auto& c:found) observations.push_back({c.steam_id,now,c.connection_type});
+    std::sort(observations.begin(),observations.end(),[](const UbWifiPeer& a,const UbWifiPeer& b){return a.id<b.id;});
+    AcquireSRWLockExclusive(&policy_lock);
+    wifi_peers.expire(now);
+    for (size_t i=0;i<observations.size();) {
+        size_t end=i+1;uint8_t type=observations[i].type;
+        while (end<observations.size() && observations[end].id==observations[i].id) {
+            if (observations[end].type!=type) type=UB_CONNECTION_UNKNOWN;
+            ++end;
+        }
+        wifi_peers.observe(observations[i].id,type,now);i=end;
+    }
+    ReleaseSRWLockExclusive(&policy_lock);
+    for (size_t i=0;i<found.size();i++) {
+        auto& c=found[i];
+        AcquireSRWLockShared(&policy_lock);
+        if (std::binary_search(ids,ids+id_count,c.steam_id)) c.flags|=UB_BLOCKED;
+        if (exclude_wifi && wifi_peers.contains(c.steam_id,now)) c.flags|=UB_WIFI_EXCLUDED;
+        ReleaseSRWLockShared(&policy_lock);
+        if (!blocked(c.steam_id)) after.push_back(before[i]);
+    }
     // Only the game's own search producer thread writes its cached index list,
     // before its original completion callback can choose a candidate.
     if (after.size()!=before.size()) {
@@ -186,7 +286,9 @@ __attribute__((noinline)) void capture_search(void* self) {
         }
     }
     AcquireSRWLockExclusive(&capture_lock);
-    memcpy(capture,found.data(),sizeof(capture));capture_count=n;omitted=extra;
+    memset(capture,0,sizeof(capture));capture_count=std::min(n,UB_MAX_CANDIDATES);extra=n-capture_count;
+    if (capture_count) memcpy(capture,found.data(),capture_count*sizeof(UbCandidate));
+    omitted=extra;
     ++search_count;InterlockedExchange(&UbFaultRuntime::search_count,search_count);search_tick=GetTickCount();captured=true;
     ReleaseSRWLockExclusive(&capture_lock);
 }
@@ -596,7 +698,7 @@ DWORD WINAPI worker(void*) {
     for (;;) {
         if (lock_ipc()) {
             AcquireSRWLockExclusive(&policy_lock);
-            enabled=shared->enable!=0;client_tick=shared->client_tick;
+            enabled=shared->enable!=0;exclude_wifi=shared->exclude_wifi!=0;client_tick=shared->client_tick;
             id_count=std::min(shared->blocked_count,UB_MAX_BLOCKED);
             memcpy(ids,shared->blocked,id_count*8);std::sort(ids,ids+id_count);
             ReleaseSRWLockExclusive(&policy_lock);
@@ -610,6 +712,7 @@ DWORD WINAPI worker(void*) {
             if (native_policy_ready && !network_failed && !(network_mask&2) && context(0x5f9798)) install_network(true);
         }
         check_modern_ownership();
+        enrich_ping();
         if (lock_ipc()) {
             shared->state=runtime_state;shared->status=runtime_status;
             if (!network_failed && !policy_requested())
@@ -622,6 +725,10 @@ DWORD WINAPI worker(void*) {
             shared->battle_suspended=battle();shared->network_hooks_ready=static_cast<uint32_t>(network_mask);
             shared->filter_active=filtering();
             shared->effective_enabled=shared->filter_active && native_policy_ready && network_mask==3 && !network_failed;
+            AcquireSRWLockExclusive(&policy_lock);
+            shared->wifi_cache_count=wifi_peers.expire(GetTickCount());
+            ReleaseSRWLockExclusive(&policy_lock);
+            shared->ping_queries=ping_queries;
             memcpy(shared->hook_diagnostics,hook_diagnostics,sizeof(hook_diagnostics));
             shared->candidate_skips=skips;shared->request_rejects=rejects;
             shared->send_rejects=sends;shared->receive_drops=drops;shared->metadata_errors=errors;
@@ -631,6 +738,8 @@ DWORD WINAPI worker(void*) {
                 shared->omitted_count=omitted;shared->search_count=search_count;shared->search_tick=search_tick;
                 ++shared->capture_sequence;captured=false;
             }
+            shared->ping_known_count=0;
+            for (uint32_t i=0;i<capture_count;i++) if (capture[i].flags&UB_PING_KNOWN) ++shared->ping_known_count;
             ReleaseSRWLockExclusive(&capture_lock);
             ReleaseMutex(ipc_mutex);
         }
@@ -652,6 +761,12 @@ extern "C" __declspec(dllexport) DWORD WINAPI BlacklistStart(void* argument) {
     lobby_data=api<LobbyData>("SteamAPI_ISteamMatchmaking_GetLobbyData");
     lobby_owner=api<LobbyOwner>("SteamAPI_ISteamMatchmaking_GetLobbyOwner");
     release_message=api<ReleaseMessage>("SteamAPI_SteamNetworkingMessage_t_Release");
+    parse_ping=api<ParsePing>("SteamAPI_ISteamNetworkingUtils_ParsePingLocationString");
+    estimate_ping=api<EstimatePing>("SteamAPI_ISteamNetworkingUtils_EstimatePingTimeFromLocalHost");
+    if (reinterpret_cast<uintptr_t>(lobby_data)!=reinterpret_cast<uintptr_t>(steam)+0x19a0 ||
+        reinterpret_cast<uintptr_t>(parse_ping)!=reinterpret_cast<uintptr_t>(steam)+0x1df0 ||
+        reinterpret_cast<uintptr_t>(estimate_ping)!=reinterpret_cast<uintptr_t>(steam)+0x1590)
+        return finish(UB_WRONG_IMAGE);
     if (!lobby_data || !lobby_owner || !release_message) return finish(UB_WRONG_IMAGE);
     wchar_t map_name[128],mutex_name[128];UbNames(GetCurrentProcessId(),map_name,mutex_name);
     ipc_mutex=CreateMutexW(nullptr,FALSE,mutex_name);

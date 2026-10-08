@@ -1,49 +1,43 @@
-# 0.1.0-candidate.4 验证范围
+# 0.1.0-candidate.5 验证范围
 
-2026-10-08（Asia/Tokyo），沿用现有环境与 uniBlacklist/main。**云端未运行原游戏、未连接真实 Steam 玩家；真实 Windows 快速匹配闪退尚未证明已修复。** 原游戏文件只作静态检查，没有改写。旧 candidate.1/2/3 发布文件保留。
+2026-10-08，现有环境、uniBlacklist/main。用户已确认candidate.4在新版游戏上的搜索拉黑生效；本轮新增元数据与Wi-Fi规则的真实Steam联机效果仍由用户验证。云端没有启动原游戏，不改游戏磁盘文件，不把自建控制当成真实对局验收。历史记录见 [candidate.4](VALIDATION_CANDIDATE4.zh-CN.md)。
 
-## 原生 Windows 既有证据
+## 原生证据与隔离执行
 
-candidate.1 曾返回真实搜索候选，但现代通信挂钩失败，过滤停用。candidate.2 用户报告黑名单为空仅观察时快速匹配2–3秒游戏退出，GUI存活、搜索计数1、其他计数0。随后上传的诊断全零；源码表明游戏退出后 GUI 清空原快照，因此不能由该文件推定失败位置。没有真实异常code/module/RVA/目标现场。
+- 新EXE SHA256 `4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9`，Steam DLL SHA256 `67ae11d71ae6ec404090094df1e47b614d27400dc53fa450023e6fbcf347902c`。五个匹配签名、场景RVA0x5a4a84沿用；没有取消版本检查。
+- REA/Ghidra12.1.4和x86指令核对姓名缓存、CP_ACP来源、网卡检测、排位与房间两种序列化、Steam估计接口及原信号表。
+- Unicorn隔离执行原0x5f9e40／0x5f8aa0，共4组：排位与房间分别原Wi-Fi=0/1。原排位输出132字节，owner在0x1a、Wi-Fi在0x78；相邻字段9/13用于排除偏移误认。原房间输出274字节，长度前缀272，Base64解码202字节，owner在0x24、Wi-Fi在0xc0。没有原EXE进程启动、真实账号或Steam网络会话。
+- 自建Wine宿主实际加载配套Steam DLL，调用原GetLobbyData／ParsePingLocationString／EstimatePingTimeFromLocalHost导出；各flat wrapper经自建thiscall槽位返回64ms和缺缓存未知，验证完整lobby64与512字节输出ABI。它不是活体Steam接口验收。
 
-新版本作风险缩减和证据保全，**不把自建控制通过写成真实崩溃根因已排除**。详见 [调查记录](QUICK_MATCH_CRASH.zh-CN.md)。
+## 产品与控制检查
 
-## 本轮检查
-
-新版EXE只读校验：6,921,216字节、x86 PE32，SHA256 `4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9`。五个入口原32字节与新文件相等，HIGHLOW掩码在新.text范围各唯一匹配；GUI/DLL产物均嵌入新SHA而无旧SHA。场景搬迁的325条原生引用归一化后逐条相同，见 [EXE适配证据](EXE_UPDATE.zh-CN.md)。Steam DLL按用户确认未更新，严格校验原SHA，未重新取得用户机器DLL。
-
-固定版 MinHook 源码指纹校验通过。MinGW-w64 GCC14，32位 i686-w64-mingw32，PE32 GUI 与 DLL，静态运行库；编译启用 `-Wall -Wextra -Werror`。临时自建控制不提交 GitHub、不打入源包或 Windows 包。
+MinGW-w64 GCC14，PE32/x86，静态运行库；`-Wall -Wextra -Werror`；固定MinHook源码指纹校验。临时控制只保存在忽略目录，不提交GitHub或放入ZIP。
 
 | 范围 | 结果 | 实际覆盖 |
 | --- | --- | --- |
-| 新版场景边界 | **4项通过**，包含于89项 | 旧地址=Battle不影响新地址=菜单；新地址=Battle覆盖旧地址=菜单；新排位场景恢复持久名单；实际PAGE_NOACCESS导致保守暂停 |
-| 原生自建控制 | **89项通过**，退出0；最终轮stderr有一条未定位SIGSEGV | 既有候选过滤/握手/消息Release/真实MinHook及槽位调用、比较交换/权限恢复/回退/归属失败；黑名单为空不装SDK组、不额外owner查询、不读无效事件、不写只读接收数组；关闭/过期/战斗不安装SDK组；未知元数据及退出状态语义；实际异常记录、线程隔离、LastError、最近8条环形覆盖 |
-| 搜索压力及真实 trampoline | 包含于89项 | 1000次直接搜索调用及另外1000次自建代码实际 thiscall→MinHook→搜索hook→原trampoline；完整EAX/LastError、未过滤的候选及正常返回。不是原EXE搜索线程或真实Steam调用 |
-| GUI历史/退出控制 | **32项通过**，退出0；stderr有一条未定位SIGSEGV | 编入生产GUI源码、实际列表控件/拉黑按钮；119999/120000毫秒、真实重现/陈旧快照、DWORD回绕、SteamID去重/稳定选择/容量；排位本次0人和已拉黑1人的实际GUI分别显示、候选0人仍有效策略；自建子进程真实退出码0xc0000005、最后搜索/场景保留、自动文本落盘、异常格式解码、跨PID拒绝、保护失效标记 |
-| 最终打包 GUI EXE 跨进程操作 | **14项通过**，退出0；stderr有一条未定位SIGSEGV | 真正发布的EXE窗口/控件、黑名单为空添加、UTF-8持久文件、关闭、重新打开恢复、选中移除；没有游戏注入 |
-| 最终打包 DLL | 通过，退出0；stderr有一条未定位SIGSEGV | LoadLibrary、真实导出、空/旧ABI请求拒绝、自建非游戏宿主指纹拒绝；没有原游戏执行 |
-| 包格式/运行依赖 | 通过 | PE32/x86、GUI subsystem、仅Windows系统DLL依赖、内置文件SHA清单 |
+| 既有原生控制 | 89项，进程退出0 | 候选压缩、握手、发送／接收与Release、现代表槽位和MinHook ABI、权限／归属失败及放行、空／关闭／心跳／战斗边界、异常环形日志及LastError；含1000次直接与1000次实际自建trampoline调用 |
+| 新元数据与Wi-Fi控制 | 64项，进程退出0 | 原机器码生成记录的实际产品解析；两个格式0/1、邻字段排除、完整owner绑定、截断／非法值／Base64拒绝；缓存TTL／回绕／容量／冲突；无持久名单时真实候选及各通信入口的Wi-Fi拒绝、关闭放行和独立名单；130候选含GUI省略的2位均过滤；ACP名字；估计失败、缺接口、限频、跨槽拒绝、原Steam DLL wrapper与复制快照更新；单独配置文件 |
+| GUI历史／策略／退出控制 | 41项，进程退出0 | 编入生产GUI代码，实际Win32列表与按钮；Wi-Fi列取代RTT／丢包、名字与64ms／有线显示；实际复选框写入共享exclude_wifi，保留名单；取消后标签解除；两分钟TTL、选择稳定、自动退出证据 |
+| 最终GUI EXE跨进程操作 | 18项，进程退出0 | 实际产品窗口，默认Wi-Fi关闭、勾选单独落盘、名单增加／Unicode保存／移除、重启恢复开关与名单、取消规则、正常退出 |
+| 最终DLL | 通过，进程退出0 | 实际产品LoadLibrary和导出，null／ABI2／非游戏宿主拒绝 |
+| 包格式和清单 | 通过 | PE32、GUI subsystem、系统DLL依赖、内置SHA256清单、ZIP CRC／大小／文件数及源码无测试集／游戏素材 |
 
-以上运行环境均为 Wine11/QEMU x86。GUI历史控制的 fault 数据为自建格式样本，退出码来自自建子进程；真实异常 handler 则在原生控制中用自建可恢复异常验证。恢复 handler 只在临时控制中，**不进入产品**。产品 handler 始终继续原异常分发。
+上述控制在Wine11/QEMU x86中运行。早一轮元数据控制与最终89项原生控制的stderr出现67字节未归属的 `qemu: uncaught target signal 11 (Segmentation fault) - core dumped`，自建检查进程本身退出0；最终64项元数据、41项GUI历史控制的stderr为空。各控制最终stderr及哈希逐项保留在package-receipt.json，不以检查通过消除环境异常，也不将其归因于用户游戏闪退。Wine图形截屏仍为黑屏，**控件操作不证明字体、DPI、像素绘制或原生Windows稳定性**。
 
-搜索薄帧编译后固定局部预留0x3c（60字节），旧版为0x5b6c（23404字节），缓存分帧并放堆；这不是峰值调用栈的实测。首次黑名单为空只安装搜索、生产代码的其余入口由非空有效策略启用；没有实际原游戏现场证明该变化消除了闪退。
+## Windows发布门槛与边界
 
-Wine此前候选版图形截屏黑屏，旧轮未定位 Wine/QEMU SIGSEGV已保留在 candidate.2/3 历史记录；candidate.3最终85项原生、32项历史、14项GUI控制均退出0但stderr有相同消息，早期84/31项轮stderr为空。本次candidate.4的89项原生控制退出0，stderr仍有67字节 `qemu: uncaught target signal 11 (Segmentation fault) - core dumped`；保留的8条异常均为控制主动产生的序号7–14，没有新增可归属现场，不能确定该消息来自哪个Wine/QEMU进程。本次32项GUI历史控制和14项最终GUI操作退出0，stderr也有相同消息；最终DLL检查退出0，stderr同样有该67字节消息（candidate.3该检查stderr为空）。检查通过不能消除前述异常，也不能把它归因成用户游戏闪退。**控件操作不构成中文字体、DPI、实际绘制或原生Windows稳定性验收。**
+发布流程在Windows Server 2022 GitHub runner中先执行实际最终产品：启动GUI、找到自身窗口与复选框、验证默认关闭、实际点击、单独options.ini写入而无名单、正常关闭／重开恢复／取消保存。32位Windows PowerShell实际加载PE32 DLL并调用导出，验证null／ABI2／非游戏指纹拒绝。只有这些操作通过，后续发布任务才上传Release并重新下载核验。实际workflow结论与提交见Release页面及delivery-receipt.json；本文件不提前声称某次尚未执行的workflow通过。
 
-## 剩余验证与功能退让
+这个Windows门槛不启动原游戏、不加载真实Steam对象、不验证实际匹配拒绝、未注入游戏，也不验收玩家名字显示、路由估计、画面／字体或DPI。用户的实际联机和最终界面效果仍需要本机测试。
 
-- candidate.4 新版EXE真实快速匹配的稳定性，以及如仍退出，game_exit_code 与故障code/module/RVA/stage。没有异常记录也不能排除故障。
-- 初次非空黑名单安装其他4个游戏入口、原Join owner查询、实际Steam共享表/实例调用、全部联机模式确认前拒绝，仍需用户复验。一次GUI连接成功不等于实际拦截成功。
-- 原搜索对象生命周期、快速取消/并发刷新与其他索引读者、真实线程栈；自建控制无法提供这些现场语义。
-- 异常日志写入失败、fail-fast、TerminateProcess、严重栈损坏、模块在连接之后加载/卸载等可能无法完整归属。
-- **额外Steam姓名/估计延迟查询本轮停用**，这两列临时未知；实测RTT/丢包率本来就未实现，继续未知。恢复元数据需要安全来源证据。
-- Steam后端占槽/清理、100ms控制周期窗口、场景1覆盖、多插件共存、安全软件/注入权限均未实测。
-- 正常退出也生成本地诊断，环形异常可含被原游戏处理的异常；只能结合最终退出码/现场判读。
+## 本轮边界与使用复验
 
-## 用户复验路径
+- 同新版EXE和未更新Steam DLL，升级须关闭旧GUI并重启游戏；ABI3 GUI／DLL成套使用。candidate.4下载保留。
+- 首次无名单、Wi-Fi未勾选时只有搜索观察，hooks_ready=0与有效过滤0正常。新延迟后台限频读取缓存；搜索回调仍没有新增Steam SDK查询。
+- 勾选后观察过的Wi-Fi账号等同于临时拉黑：候选和网络入口共享同一策略，不写blacklist.tsv。未知／冲突放行，未曾观察的被动来访账号不会凭猜测排除。账号缓存两分钟／4096，GUI历史两分钟／2048，单次GUI快照128，实际过滤上限4096。
+- 名字来自游戏已经转换并截断的缓存，不能补回原来被游戏丢弃的字符。估计列是Steam路径估计，不是RTT；背景接口未就绪、缺属性或估计失败可继续显示未知。接口线程与关闭生命周期仍须真实Steam实测。
+- 勾选／取消通常约100ms控制周期，仍受控制线程调度和缓存接口调用耗时影响；已发生的确认或握手不撤回，原Battle场景暂停所有规则。
+- candidate.2旧崩溃的确切根因仍未知，排位并发取消／搜索对象生命周期、全部模式确认前拒绝、多插件共存等边界未完成真实游戏验证。发生退出时仍保留既有自动状态与最多8条异常日志。
+- 细微图标差异尚未闭合原生映射；[分类与未知点](CONNECTION_STATES.zh-CN.md)只供分析，没有新增信号、FPS或抖动过滤规则。
 
-关闭旧GUI、重启游戏，完整解压 candidate.4。先黑名单为空连接并快速匹配：观察模式 hooks_ready0、两有效过滤位0、拦截计数0正常；搜索计数应自然增长，诊断scene_rva应为5917316（0x5A4A84）。当前名字/延迟未知是主动退让。若再退出，GUI仍能“保存诊断状态”；自动文本在 LOCALAPPDATA/UNI2Blacklist/diagnostics，带 last_before_exit、PID和game_exit_code。
-
-黑名单为空稳定后再验证已知账号加入名单，确认 hooks_ready3、请求开关/策略ack/心跳/非战斗条件与有效位，再看实际拒绝流程。完整拒绝尚未验收。
-
-下载包的SHA256、大小、ZIP CRC、文件数见 downloads/0.1.0-candidate.4/package-receipt.json 和 Release delivery-receipt.json；发布后重新下载校验。源码及包均不含测试集、实际个人日志、名单、原游戏文件或凭据。
+下载SHA、大小、CRC、文件数见 downloads/0.1.0-candidate.5/package-receipt.json 和Release delivery-receipt.json。源码和包不包含临时控制、实际个人日志、名单、原游戏文件或凭据。

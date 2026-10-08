@@ -1,0 +1,65 @@
+{
+  "sha256": "4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9",
+  "original_ranked_producer": "0x5f9e40",
+  "controls": [
+    {
+      "wifi": 0,
+      "length": 132,
+      "owner_offset": 26,
+      "wifi_offset": 120
+    },
+    {
+      "wifi": 1,
+      "length": 132,
+      "owner_offset": 26,
+      "wifi_offset": 120
+    },
+    {
+      "format": "room",
+      "wifi": 0,
+      "length": 274,
+      "encoded_length": 272,
+      "decoded_length": 202,
+      "owner_offset": 36,
+      "wifi_offset": 192
+    },
+    {
+      "format": "room",
+      "wifi": 1,
+      "length": 274,
+      "encoded_length": 272,
+      "decoded_length": 202,
+      "owner_offset": 36,
+      "wifi_offset": 192
+    }
+  ],
+  "original_game_process_started": false,
+  "version": "0.1.0-candidate.5",
+  "original_room_producer": "0x5f8aa0",
+  "record_encoding": {
+    "ranked": "direct, 132 bytes",
+    "room": "BE16 length 272 + Base64, decoded 202 bytes"
+  },
+  "original_wifi_detection": "0x4de070",
+  "ranked_wifi_parser_offset": "0x144",
+  "room_wifi_parser_offset": "0x234",
+  "name_source": {
+    "producer": "0x4f5470",
+    "cache_row_offset": "0x30",
+    "bytes": 44,
+    "encoding_conversion": "0x4e0880: UTF-8 to CP_ACP; plugin CP_ACP to UTF-8"
+  },
+  "latency_source": {
+    "game_function": "0x4ef6b0",
+    "sdk_export_rvas": [
+      "0x19a0",
+      "0x1df0",
+      "0x1590"
+    ],
+    "value": "unadjusted Steam estimate in ms",
+    "producer_additional_sdk_calls": false
+  },
+  "original_machine_code_or_assets_included": false,
+  "live_steam_validation": false,
+  "fine_icon_variant_mapping": "unknown; see CONNECTION_STATES.zh-CN.md"
+}

@@ -40,7 +40,7 @@
   ],
   "scope": "static signatures; native Windows real-game injection not validated",
   "exe_bytes": 6921216,
-  "version": "0.1.0-candidate.4",
+  "version": "0.1.0-candidate.5",
   "steam_api_sha256": "67ae11d71ae6ec404090094df1e47b614d27400dc53fa450023e6fbcf347902c",
   "scene_va": "0x9a4a84",
   "scene_rva": "0x5a4a84",
