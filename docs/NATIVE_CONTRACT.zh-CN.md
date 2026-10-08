@@ -69,6 +69,6 @@ IPC ABI 升至2（Local\UNI2Blacklist-v2-PID），不能与旧 GUI/DLL 混用；
 
 ## candidate.3 生命周期补充
 
-首次空名单只安装搜索入口（native index0）；native index1–4及两套通信组仅在启用、心跳有效、非空名单、非战斗后安装。仍用ABI2，但GUI/DLL必须同候选版本并重启游戏升级。network位0在观察模式正常，不代表错误；有效保护还要求非空名单。关闭/清空名单不卸载既有入口，直接委派原调用。
+首次黑名单为空只安装搜索入口（native index0）；native index1–4及两套通信组仅在启用、心跳有效、非空黑名单、非战斗后安装。仍用ABI2，但GUI/DLL必须同候选版本并重启游戏升级。network位0在观察模式正常，不代表错误；有效保护还要求非空黑名单。关闭/清黑名单为空不卸载既有入口，直接委派原调用。
 
 搜索捕获不再额外查询Steam姓名/Ping，当前元数据为未知；堆缓存与原函数调用分帧。GUI历史最多2048行、120秒，不影响原eligible索引生命周期。退出报告保留最后状态并显式 disconnected；新增独立本地64字节异常记录合同见 [快速匹配调查](QUICK_MATCH_CRASH.zh-CN.md)。

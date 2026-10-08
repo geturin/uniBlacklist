@@ -613,7 +613,7 @@ DWORD WINAPI worker(void*) {
         if (lock_ipc()) {
             shared->state=runtime_state;shared->status=runtime_status;
             if (!network_failed && !policy_requested())
-                strncpy(shared->message_utf8,"观察模式：名单为空、开关关闭或心跳过期；不拦截通信。",sizeof(shared->message_utf8)-1);
+                strncpy(shared->message_utf8,"观察模式：黑名单为空、开关关闭或心跳过期；不拦截通信。",sizeof(shared->message_utf8)-1);
             else if (!network_failed && network_mask!=3)
                 strncpy(shared->message_utf8,"候选过滤已接入；等待通信接口，完整保护未生效。",sizeof(shared->message_utf8)-1);
             else memcpy(shared->message_utf8,runtime_message,sizeof(runtime_message));
@@ -661,7 +661,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI BlacklistStart(void* argument) {
     if (!shared || !lock_ipc(1000)) return finish(UB_IPC_FAILURE);
     memset(shared,0,sizeof(*shared));shared->magic=UB_MAGIC;shared->abi=UB_ABI;
     shared->bytes=sizeof(*shared);shared->pid=GetCurrentProcessId();ReleaseMutex(ipc_mutex);
-    message("正在接入搜索观察入口；空名单不安装通信挂钩。",UB_STARTING);
+    message("正在接入搜索观察入口；黑名单为空时不安装通信挂钩。",UB_STARTING);
     HMODULE retained=nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,reinterpret_cast<LPCWSTR>(&BlacklistStart),&retained);
     UbInstallFaultTrace();
@@ -671,7 +671,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI BlacklistStart(void* argument) {
     std::vector<Hook> h={{reinterpret_cast<void*>(image+SIG_search_results.rva),reinterpret_cast<void*>(hook_search),reinterpret_cast<void**>(&original_search)}};
     if (!install(h,hook_diagnostics[0])) {message("原生入口挂钩失败；黑名单未启用。",UB_ERROR,UB_HOOK_FAILURE);return finish(UB_HOOK_FAILURE);}
     InterlockedExchange(&ready,1);
-    message("搜索观察已接入；空名单不安装通信挂钩。",UB_READY);
+    message("搜索观察已接入；黑名单为空时不安装通信挂钩。",UB_READY);
     HANDLE thread=CreateThread(nullptr,0,worker,nullptr,0,nullptr);
     if (!thread) {InterlockedExchange(&ready,0);message("无法启动黑名单控制线程。",UB_ERROR,UB_IPC_FAILURE);return finish(UB_IPC_FAILURE);}
     CloseHandle(thread);return finish(UB_OK);

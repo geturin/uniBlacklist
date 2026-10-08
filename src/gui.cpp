@@ -221,17 +221,16 @@ void tick() {
     std::wstring state=UbWide(std::string(snapshot.message_utf8,strnlen(snapshot.message_utf8,256)));
     if (DWORD(GetTickCount()-snapshot.heartbeat)>3000) state=L"插件心跳过期，不能确认保护有效。";
     else if (snapshot.battle_suspended) state+=L"  当前对战中，拦截暂停。";
-    else if (!snapshot.blocked_count) state+=L"  空名单：只观察搜索，通信不拦截。";
+    else if (!snapshot.blocked_count) state+=L"  黑名单为空：持续观察排位搜索，通信不拦截。";
     else if (!snapshot.enable) state+=L"  保护开关已关闭。";
     else if (snapshot.policy_ack!=snapshot.policy_revision) state+=L"  等待名单生效。";
     else if (!UbEffective(snapshot,GetTickCount())) state+=L"  完整保护未生效。";
     set(status_label,state);
-    auto detail=L"原搜索 "+std::to_wstring(snapshot.search_count)+L" 次 | 跳过候选 "+std::to_wstring(snapshot.candidate_skips)+
-        L" | 拒绝握手 "+std::to_wstring(snapshot.request_rejects)+L" | 拦截发送 "+std::to_wstring(snapshot.send_rejects)+
-        L" | 丢弃黑名单消息 "+std::to_wstring(snapshot.receive_drops);
-    if (snapshot.search_count) detail+=L" | 列表距今 "+std::to_wstring(DWORD(GetTickCount()-snapshot.search_tick)/1000)+L" 秒";
-    detail+=L" | 最近2分钟 "+std::to_wstring(rows.size())+L" 人";
-    if (candidate_history.omitted()) detail+=L" | 历史列表已满，省略新行 "+std::to_wstring(candidate_history.omitted())+L" 次";
+    auto detail=L"搜索 "+std::to_wstring(snapshot.search_count)+L" 次 | 本次捕获 "+std::to_wstring(snapshot.candidate_count)+
+        L" 人 | 最近2分钟 "+std::to_wstring(rows.size())+L" 人 | 已拉黑 "+std::to_wstring(entries.size())+
+        L" 人 | 跳过 "+std::to_wstring(snapshot.candidate_skips)+L" | 拒绝 "+std::to_wstring(snapshot.request_rejects)+
+        L" | 拦截发送 "+std::to_wstring(snapshot.send_rejects)+L" | 丢弃 "+std::to_wstring(snapshot.receive_drops);
+    if (candidate_history.omitted()) detail+=L" | 历史已满，省略 "+std::to_wstring(candidate_history.omitted());
     set(summary_label,detail);
 }
 void copy_id() {
