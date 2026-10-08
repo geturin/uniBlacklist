@@ -6,7 +6,7 @@ on:
       version:
         description: Committed candidate package version
         required: true
-        default: 0.1.0-candidate.6
+        default: 0.1.0-candidate.7
         type: string
 
 permissions:
@@ -33,16 +33,28 @@ jobs:
           $taskProduct = (Resolve-Path "windows-candidate/UNI2Blacklist-$env:PACKAGE_VERSION-win32").Path
           Add-Type @'
           using System;
+          using System.Text;
           using System.Runtime.InteropServices;
           public static class ProductWindow {
+            [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left,Top,Right,Bottom; }
             [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string n);
             [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
             [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr h, int id);
             [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+            [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+            [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out Rect r);
+            [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+            [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+            [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h,IntPtr dc,uint f);
             public static IntPtr FindCandidate() { return FindWindow("UNI2BlacklistWindow", null); }
+            public static string Text(IntPtr h) { var b=new StringBuilder(256); GetWindowText(h,b,b.Capacity); return b.ToString(); }
+            public static int Columns(IntPtr h) { return SendMessage(SendMessage(h,0x101f,IntPtr.Zero,IntPtr.Zero),0x1200,IntPtr.Zero,IntPtr.Zero).ToInt32(); }
           }
           '@
+          Add-Type -AssemblyName System.Drawing
           $taskConfig = Join-Path $env:LOCALAPPDATA 'UNI2Blacklist'
+          $taskScreenshots = Join-Path $PWD 'windows-validation'
+          [void](New-Item -ItemType Directory -Path $taskScreenshots)
           if (Test-Path $taskConfig) { throw 'Product configuration already exists on isolated runner' }
           function Open-Candidate {
             $p = Start-Process (Join-Path $taskProduct 'UNI2Blacklist.exe') -WorkingDirectory $taskProduct -PassThru
@@ -51,29 +63,130 @@ jobs:
               $h = [ProductWindow]::FindCandidate()
               [uint32]$owner = 0
               if ($h -ne [IntPtr]::Zero) { [void][ProductWindow]::GetWindowThreadProcessId($h, [ref]$owner) }
-              if ($owner -eq $p.Id -and [ProductWindow]::GetDlgItem($h,113) -ne [IntPtr]::Zero) { return @{Process=$p; Window=$h} }
+              if ($owner -eq $p.Id -and [ProductWindow]::GetDlgItem($h,114) -ne [IntPtr]::Zero -and [ProductWindow]::GetDlgItem($h,109) -ne [IntPtr]::Zero -and [ProductWindow]::GetDlgItem($h,115) -ne [IntPtr]::Zero) { return @{Process=$p; Window=$h} }
               Start-Sleep -Milliseconds 100
             }
-            throw "GUI window or Wi-Fi control was not found; pid=$($p.Id), session=$($p.SessionId), main=$($p.MainWindowHandle), class-handle=$h, owner=$owner"
+            throw "GUI window or language control was not found; pid=$($p.Id), session=$($p.SessionId), main=$($p.MainWindowHandle), class-handle=$h, owner=$owner"
           }
           function Close-Candidate($app) {
             [void][ProductWindow]::SendMessage($app.Window,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
             if (-not $app.Process.WaitForExit(10000) -or $app.Process.ExitCode -ne 0) { throw 'GUI did not exit normally' }
           }
+          function Assert-Title($window,$title) {
+            if ([ProductWindow]::Text($window) -cne $title) { throw "Window title is not $title" }
+          }
+          function Set-Language($app,$selected) {
+            $combo=[ProductWindow]::GetDlgItem($app.Window,114)
+            if ([ProductWindow]::SendMessage($combo,0x14e,[IntPtr]$selected,[IntPtr]::Zero).ToInt32() -ne $selected) { throw 'Language selection failed' }
+            [void][ProductWindow]::SendMessage($app.Window,0x111,[IntPtr](114 -bor (1 -shl 16)),$combo)
+          }
+          function Open-Activity($app,$title) {
+            [void][ProductWindow]::SendMessage([ProductWindow]::GetDlgItem($app.Window,115),0xf5,[IntPtr]::Zero,[IntPtr]::Zero)
+            $h=[IntPtr]::Zero
+            for ($i=0; $i -lt 100; $i++) {
+              $h=[ProductWindow]::FindWindow('UNI2BlacklistActivityWindow',$null)
+              [uint32]$owner=0
+              if ($h -ne [IntPtr]::Zero) { [void][ProductWindow]::GetWindowThreadProcessId($h,[ref]$owner) }
+              if ($owner -eq $app.Process.Id -and [ProductWindow]::GetDlgItem($h,118) -ne [IntPtr]::Zero) { break }
+              Start-Sleep -Milliseconds 50
+            }
+            if ($h -eq [IntPtr]::Zero -or $owner -ne $app.Process.Id) { throw 'Request activity was not created by actual GUI' }
+            Assert-Title $h $title
+            if ([ProductWindow]::GetDlgItem($h,116) -eq [IntPtr]::Zero -or [ProductWindow]::Columns([ProductWindow]::GetDlgItem($h,118)) -ne 3) { throw 'Activity clear button or columns are missing' }
+            foreach ($id in 304..307) { if ([ProductWindow]::Text([ProductWindow]::GetDlgItem($h,$id)) -cne '0') { throw 'Unattached native cumulative count was invented' } }
+            [void][ProductWindow]::SendMessage([ProductWindow]::GetDlgItem($h,116),0xf5,[IntPtr]::Zero,[IntPtr]::Zero)
+            if ([ProductWindow]::SendMessage([ProductWindow]::GetDlgItem($h,118),0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32() -ne 0) { throw 'Clearing empty activity was not harmless' }
+            return $h
+          }
+          function Close-Activity($app,$window) {
+            [void][ProductWindow]::SendMessage($window,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
+            if ([ProductWindow]::IsWindow($window) -or -not [ProductWindow]::IsWindow($app.Window) -or $app.Process.HasExited) { throw 'Activity close affected main window' }
+          }
+          function Save-UiScreenshot($window,$name) {
+            Start-Sleep -Milliseconds 500
+            $r=New-Object ProductWindow+Rect
+            if (-not [ProductWindow]::GetWindowRect($window,[ref]$r)) { throw 'Cannot measure screenshot window' }
+            $width=$r.Right-$r.Left; $height=$r.Bottom-$r.Top
+            $bitmap=[System.Drawing.Bitmap]::new($width,$height)
+            $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+              for ($attempt=0; $attempt -lt 2; $attempt++) {
+                if ($attempt -eq 0) {
+                  try { $graphics.CopyFromScreen($r.Left,$r.Top,0,0,$bitmap.Size) } catch { continue }
+                  $captureMethod='actual desktop pixels'
+                } else {
+                  $dc=$graphics.GetHdc()
+                  try { $printed=[ProductWindow]::PrintWindow($window,$dc,2) } finally { $graphics.ReleaseHdc($dc) }
+                  if (-not $printed) { throw 'Cannot capture the actual Windows GUI window' }
+                  $captureMethod='native window capture'
+                }
+                $colors=[Collections.Generic.HashSet[int]]::new()
+                [long]$sum=0; [long]$samples=0
+                for ($y=0; $y -lt $height; $y+=5) { for ($x=0; $x -lt $width; $x+=5) {
+                  $pixel=$bitmap.GetPixel($x,$y); [void]$colors.Add($pixel.ToArgb()); $sum+=$pixel.R+$pixel.G+$pixel.B; $samples++
+                } }
+                if ($colors.Count -ge 6 -and $sum -ge 30*$samples) { break }
+              }
+              if ($colors.Count -lt 6 -or $sum -lt 30*$samples) { throw 'Windows screenshot is blank or black; no fabricated preview will be published' }
+              $path=Join-Path $taskScreenshots $name
+              $bitmap.Save($path,[System.Drawing.Imaging.ImageFormat]::Png)
+              Write-Output "Real Windows screenshot: $name ($width x $height, $($colors.Count) sampled colors, $captureMethod)"
+            } finally { $graphics.Dispose(); $bitmap.Dispose() }
+          }
           $app = Open-Candidate
           try {
+            Assert-Title $app.Window 'UNI2 黑名单'
+            $r=New-Object ProductWindow+Rect
+            if (-not [ProductWindow]::GetWindowRect($app.Window,[ref]$r)) { throw 'Cannot measure compact main window' }
+            $dpi=[ProductWindow]::GetDpiForWindow($app.Window)
+            $width=($r.Right-$r.Left)*96.0/$dpi; $height=($r.Bottom-$r.Top)*96.0/$dpi
+            if ($width -lt 760 -or $width -gt 960 -or $height -lt 520 -or $height -gt 700) { throw "Main window is not compact: $width x $height at DPI $dpi" }
+            Write-Output "Actual main-window size: $width x $height logical pixels; DPI $dpi"
+            foreach ($id in 106,107,108,111) { if ([ProductWindow]::GetDlgItem($app.Window,$id) -ne [IntPtr]::Zero) { throw "Removed manual or copy control still exists: $id" } }
+            if ([ProductWindow]::Columns([ProductWindow]::GetDlgItem($app.Window,104)) -ne 5 -or [ProductWindow]::Columns([ProductWindow]::GetDlgItem($app.Window,109)) -ne 1) { throw 'Main lists do not have compact columns' }
             $check = [ProductWindow]::GetDlgItem($app.Window,113)
             if ([ProductWindow]::SendMessage($check,0xf0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -ne 0) { throw 'Wi-Fi default is not off' }
             [void][ProductWindow]::SendMessage($check,0xf5,[IntPtr]::Zero,[IntPtr]::Zero)
             if ([IO.File]::ReadAllText((Join-Path $taskConfig 'options.ini')) -cne "exclude_wifi=1`n") { throw 'Checkbox was not saved' }
             if (Test-Path (Join-Path $taskConfig 'blacklist.tsv')) { throw 'Wi-Fi option wrote blacklist accounts' }
+            Save-UiScreenshot $app.Window "UNI2Blacklist-$env:PACKAGE_VERSION-ui-zh.png"
+            $activity=Open-Activity $app '请求记录'
+            Save-UiScreenshot $activity "UNI2Blacklist-$env:PACKAGE_VERSION-requests-zh.png"
+            Set-Language $app 1
+            Assert-Title $app.Window 'UNI2 Blacklist'
+            Assert-Title $activity 'Request activity'
+            $englishControls=@{101='Refresh';102='Connect';103='Enable filtering';105='Block player';110='Unblock';112='Diagnostics';113='Exclude Wi-Fi';115='Request activity'}
+            foreach ($id in $englishControls.Keys) { if ([ProductWindow]::Text([ProductWindow]::GetDlgItem($app.Window,$id)) -cne $englishControls[$id]) { throw "Main control $id did not switch to English" } }
+            $englishActivity=@{300='Skipped';301='Rejected';302='Intercepted';303='Dropped';116='Clear records'}
+            foreach ($id in $englishActivity.Keys) { if ([ProductWindow]::Text([ProductWindow]::GetDlgItem($activity,$id)) -cne $englishActivity[$id]) { throw "Activity control $id did not switch to English" } }
+            if ([ProductWindow]::Text([ProductWindow]::GetDlgItem($app.Window,204)) -cne 'Start the game') { throw 'Main unattached status did not switch to English' }
+            if ([IO.File]::ReadAllText((Join-Path $taskConfig 'language.ini')) -cne "language=en`n") { throw 'English language was not saved' }
+            Save-UiScreenshot $activity "UNI2Blacklist-$env:PACKAGE_VERSION-requests-en.png"
+            Close-Activity $app $activity
+            Save-UiScreenshot $app.Window "UNI2Blacklist-$env:PACKAGE_VERSION-ui-en.png"
+            $activity=Open-Activity $app 'Request activity'
+            Close-Activity $app $activity
           } finally { Close-Candidate $app }
           $app = Open-Candidate
           try {
+            Assert-Title $app.Window 'UNI2 Blacklist'
+            if ([ProductWindow]::SendMessage([ProductWindow]::GetDlgItem($app.Window,114),0x147,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32() -ne 1) { throw 'Language selection was not restored' }
             $check = [ProductWindow]::GetDlgItem($app.Window,113)
             if ([ProductWindow]::SendMessage($check,0xf0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64() -ne 1) { throw 'Wi-Fi option was not restored' }
             [void][ProductWindow]::SendMessage($check,0xf5,[IntPtr]::Zero,[IntPtr]::Zero)
-            if ([IO.File]::ReadAllText((Join-Path $taskConfig 'options.ini')) -cne "exclude_wifi=0`n") { throw 'Uncheck was not saved' }
+            if ([IO.File]::ReadAllText((Join-Path $taskConfig 'options.ini')) -cne "exclude_wifi=0`n" -or [IO.File]::ReadAllText((Join-Path $taskConfig 'language.ini')) -cne "language=en`n") { throw 'Uncheck changed independent settings' }
+          } finally { Close-Candidate $app }
+          [IO.File]::WriteAllText((Join-Path $taskConfig 'blacklist.tsv'),"# UNI2Blacklist v1; SteamID64<TAB>alias; UTF-8`n9155818046751834113`tPrivate UI check`n",[Text.UTF8Encoding]::new($false))
+          $app = Open-Candidate
+          try {
+            $blocked=[ProductWindow]::GetDlgItem($app.Window,109)
+            if ([ProductWindow]::SendMessage($blocked,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32() -ne 1) { throw 'Pre-existing blocklist was not restored' }
+            [void][ProductWindow]::SendMessage($blocked,0x100,[IntPtr]0x24,[IntPtr]::Zero)
+            [void][ProductWindow]::SendMessage([ProductWindow]::GetDlgItem($app.Window,110),0xf5,[IntPtr]::Zero,[IntPtr]::Zero)
+            if ([ProductWindow]::SendMessage($blocked,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32() -ne 0 -or [IO.File]::ReadAllText((Join-Path $taskConfig 'blacklist.tsv')).Contains('9155818046751834113')) { throw 'Remove selected blocklist account did not persist' }
+            Set-Language $app 0
+            Assert-Title $app.Window 'UNI2 黑名单'
+            if ([IO.File]::ReadAllText((Join-Path $taskConfig 'language.ini')) -cne "language=zh-CN`n") { throw 'Chinese language was not saved' }
           } finally { Close-Candidate $app }
           $taskProbe = @'
           $ErrorActionPreference = 'Stop'
@@ -106,8 +219,16 @@ jobs:
           $taskProbe | Set-Content -Encoding utf8 'windows-candidate/dll-probe.ps1'
           & "$env:WINDIR/SysWOW64/WindowsPowerShell/v1.0/powershell.exe" -NoProfile -ExecutionPolicy Bypass -File 'windows-candidate/dll-probe.ps1'
           if ($LASTEXITCODE -ne 0) { throw "PE32 DLL check failed: $LASTEXITCODE" }
-          Write-Output 'Windows GUI default/toggle/persistence/restart/uncheck/no-blacklist-write/normal-exit: passed'
+          Write-Output 'Windows compact bilingual GUI: removed manual controls, live main/activity translation, language persistence, independent Wi-Fi options, activity open/clear/close, blocklist removal, normal exit: passed'
           Write-Output 'Original game and live Steam interfaces were not started. Native Windows gameplay remains user validation.'
+      - name: Save actual empty Windows GUI screenshots
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-ui-${{ inputs.version }}
+          path: windows-validation/*.png
+          if-no-files-found: warn
+          retention-days: 30
   publish:
     needs: windows-product
     runs-on: ubuntu-24.04
@@ -117,6 +238,11 @@ jobs:
       PACKAGE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Retrieve verified native Windows screenshots
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-ui-${{ inputs.version }}
+          path: windows-validation
       - name: Publish committed packages and download them for verification
         run: |
           python3 - <<'PY'
@@ -156,7 +282,14 @@ jobs:
                   result.append(dict(p, zip_crc_verified=True))
               return result
           verify(original)
-          assets = [str(original / n) for n in sorted(names)]
+          screenshots = sorted(pathlib.Path('windows-validation').glob('*.png'))
+          expected_screenshots = {f'UNI2Blacklist-{version}-{kind}.png' for kind in ('ui-zh','ui-en','requests-zh','requests-en')}
+          assert {p.name for p in screenshots} == expected_screenshots
+          for screenshot in screenshots:
+              assert screenshot.read_bytes().startswith(b'\x89PNG\r\n\x1a\n') and screenshot.stat().st_size > 1024
+          screenshot_receipts = [dict(filename=p.name, bytes=p.stat().st_size,
+                                      sha256=hashlib.sha256(p.read_bytes()).hexdigest()) for p in screenshots]
+          assets = [str(original / n) for n in sorted(names)] + [str(p) for p in screenshots]
           assets += [str(original / 'SHA256SUMS.txt'), str(original / 'package-receipt.json')]
           subprocess.run(['gh', 'release', 'create', tag, *assets, '--repo', repo,
                           '--target', commit, '--prerelease', '--title', 'UNI2Blacklist ' + version,
@@ -164,13 +297,19 @@ jobs:
           destination = pathlib.Path(tempfile.mkdtemp(prefix='uniBlacklist-', dir=os.environ['RUNNER_TEMP']))
           subprocess.run(['gh', 'release', 'download', tag, '--repo', repo, '--dir', str(destination),
                           '--pattern', '*.zip', '--pattern', 'SHA256SUMS.txt',
-                          '--pattern', 'package-receipt.json'], check=True)
+                          '--pattern', 'package-receipt.json', '--pattern', '*.png'], check=True)
+          for screenshot in screenshot_receipts:
+              downloaded = destination / screenshot['filename']
+              assert downloaded.stat().st_size == screenshot['bytes']
+              assert hashlib.sha256(downloaded.read_bytes()).hexdigest() == screenshot['sha256']
           delivery = dict(repository=repo, tag=tag, publication_commit=commit,
                           source_commit=receipt['source_commit'], products=verify(destination),
+                          native_windows_empty_ui_screenshots=screenshot_receipts,
                           authorized_download_verified=True, source_without_test_suite=True,
                           native_windows_product_validation=True,
                           native_windows_runner='windows-2022',
-                          native_windows_scope=['actual GUI start/default Wi-Fi option/toggle/persistence/restart/uncheck/normal exit',
+                          native_windows_scope=['actual compact GUI, removed manual controls, live Chinese/English main and activity windows, independent language and Wi-Fi persistence, request activity open/clear/close, blocklist removal, normal exit',
+                                                'actual empty native Windows GUI screenshots in both languages',
                                                 'actual PE32 DLL load and exported null/ABI2/non-game rejection'],
                           workflow_run_url=f"https://github.com/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
                           original_game_execution=False, native_windows_game_validation=False)

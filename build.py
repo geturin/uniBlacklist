@@ -8,12 +8,13 @@ import shutil
 import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parent
-VERSION = '0.1.0-candidate.6'
+VERSION = '0.1.0-candidate.7'
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--cc', default='i686-w64-mingw32-gcc')
     p.add_argument('--cxx', default='i686-w64-mingw32-g++')
+    p.add_argument('--windres', default='i686-w64-mingw32-windres')
     a = p.parse_args()
     if subprocess.check_output([a.cxx, '-dumpmachine'], text=True).strip() != 'i686-w64-mingw32':
         raise SystemExit('Use the i686-w64-mingw32 (32-bit Windows) compiler')
@@ -34,13 +35,19 @@ def main():
         run([a.cc,*common,'-Wno-unused-parameter','-c',vendor/'src'/(name+'.c'),'-o',target])
     cpp = [a.cxx,*common,'-std=c++17','-static','-static-libgcc','-static-libstdc++']
     run([*cpp,'-shared','-Wl,--kill-at',ROOT/'src/runtime.cpp',*objects,'-ladvapi32','-o',out/'uni2-blacklist.dll'])
+    gui_resource=obj/'gui_resource.o'
+    run([a.windres,'--input',ROOT/'resources/gui.rc','--output',gui_resource,
+         '--output-format=coff','--target=pe-i386','--include-dir',ROOT/'resources',
+         '--preprocessor='+a.cc,'--preprocessor-arg=-E','--preprocessor-arg=-xc',
+         '--preprocessor-arg=-DRC_INVOKED'])
     run([*cpp,'-mwindows','-municode',ROOT/'src/gui.cpp',ROOT/'src/injector.cpp',ROOT/'src/settings.cpp',
-         '-lcomctl32','-lcomdlg32','-lshell32','-ladvapi32','-o',out/'UNI2Blacklist.exe'])
+         ROOT/'src/ui_language.cpp',gui_resource,
+         '-lcomctl32','-lcomdlg32','-lshell32','-ladvapi32','-luxtheme','-lgdi32','-o',out/'UNI2Blacklist.exe'])
     for name in ['README.zh-CN.md','LICENSE']:
         if (ROOT/name).exists():shutil.copy2(ROOT/name,out/name)
     shutil.copy2(vendor/'LICENSE.txt',out/'MinHook-LICENSE.txt')
     (out/'docs').mkdir(exist_ok=True)
-    for name in ['VALIDATION.zh-CN.md','VALIDATION_CANDIDATE4.zh-CN.md','VALIDATION_CANDIDATE5.zh-CN.md','WIFI_IDENTITY_FIX.zh-CN.md','NATIVE_CONTRACT.zh-CN.md','HOOK_FIX.zh-CN.md','QUICK_MATCH_CRASH.zh-CN.md','EXE_UPDATE.zh-CN.md','CONNECTION_STATES.zh-CN.md','CONNECTION_EVIDENCE.json']:
+    for name in ['VALIDATION.zh-CN.md','VALIDATION_CANDIDATE4.zh-CN.md','VALIDATION_CANDIDATE5.zh-CN.md','VALIDATION_CANDIDATE6.zh-CN.md','GUI_REDESIGN.zh-CN.md','WIFI_IDENTITY_FIX.zh-CN.md','NATIVE_CONTRACT.zh-CN.md','HOOK_FIX.zh-CN.md','QUICK_MATCH_CRASH.zh-CN.md','EXE_UPDATE.zh-CN.md','CONNECTION_STATES.zh-CN.md','CONNECTION_EVIDENCE.json']:
         if (ROOT/'docs'/name).exists():shutil.copy2(ROOT/'docs'/name,out/'docs'/name)
     receipt={f.relative_to(out).as_posix():hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(out.rglob('*')) if f.is_file() and f.name!='SHA256.json'}
     (out/'SHA256.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')

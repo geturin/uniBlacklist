@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 constexpr uint32_t UB_ABI = 3;
-constexpr char UB_VERSION[] = "0.1.0-candidate.6";
+constexpr char UB_VERSION[] = "0.1.0-candidate.7";
 constexpr uint32_t UB_MAGIC = 0x31424e55;
 constexpr uint32_t UB_MAX_BLOCKED = 256;
 constexpr uint32_t UB_MAX_CANDIDATES = 128;
