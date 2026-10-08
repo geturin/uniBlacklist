@@ -1,0 +1,144 @@
+{
+  "version": "0.1.0-candidate.7",
+  "source_commit": "78fe6a24a1d6fb8395886e2cb89cd6e9d81b8eca",
+  "compiler": "MinGW-w64 GCC 14 i686-w64-mingw32 static runtime",
+  "products": [
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.7-win32.zip",
+      "bytes": 740043,
+      "sha256": "ef4d9e59de2c3a22173b48d58c3fc40b1884dafb3bd1d55bae3d3a67ffda0adc",
+      "file_count": 18
+    },
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.7-source.zip",
+      "bytes": 171713,
+      "sha256": "ccf0aa62a81b7123b5de84f4bc31d3a274d4cc7bc7b9ec8950f104f0314d53a1",
+      "file_count": 54
+    }
+  ],
+  "supported_game_sha256": "4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9",
+  "supported_game_bytes": 6921216,
+  "steam_api_sha256": "67ae11d71ae6ec404090094df1e47b614d27400dc53fa450023e6fbcf347902c",
+  "steam_dll_unchanged_source": "user confirmation; existing runtime fingerprint remains enforced",
+  "scene_rva": "0x5a4a84",
+  "ipc_abi": 3,
+  "game_execution": false,
+  "native_windows_game_validation": false,
+  "native_windows_product_validation": "required workflow gate before release; result and four actual screenshots in delivery-receipt.json",
+  "change_scope": "GUI, local language preferences and read-only native cumulative counter observations; runtime filtering source unchanged",
+  "main_default_logical_outer_size": [
+    880,
+    620
+  ],
+  "main_minimum_logical_outer_size": [
+    760,
+    520
+  ],
+  "manual_steam_id_entry_removed": true,
+  "manual_alias_and_add_removed": true,
+  "copy_id_control_removed": true,
+  "common_controls_v6_manifest": true,
+  "dpi_manifest": "PerMonitorV2,PerMonitor; high-DPI multi-monitor game validation not performed",
+  "original_program_icon": true,
+  "default_language": "zh-CN",
+  "live_languages": [
+    "zh-CN",
+    "en"
+  ],
+  "program_titles": [
+    "UNI2 黑名单",
+    "UNI2 Blacklist"
+  ],
+  "language_file": "language.ini",
+  "language_atomic_save": true,
+  "language_independent_of_blacklist_and_wifi": true,
+  "activity_counter_sources": [
+    "candidate_skips",
+    "request_rejects",
+    "send_rejects",
+    "receive_drops"
+  ],
+  "activity_poll_ms": 500,
+  "activity_history_capacity": 200,
+  "activity_rows_are_interval_aggregates": true,
+  "activity_time_is_observation_time": true,
+  "activity_peer_identity_available": false,
+  "activity_clear_preserves_native_totals_and_baseline": true,
+  "activity_child_close_keeps_observing": true,
+  "activity_shared_list_image_ownership": "LVS_SHAREIMAGELISTS; GUI frees shared image list",
+  "portable_activity_model_checks": 250,
+  "portable_activity_model_exit_code": 0,
+  "wine_language_control_checks": 37,
+  "wine_history_policy_exit_activity_checks": 57,
+  "wine_final_gui_operation_checks": 53,
+  "packaged_dll_load_and_reject_check": true,
+  "old_abi_request_rejected": true,
+  "wine_control_exit_codes": {
+    "ui-language-check": 0,
+    "history-exit-check": 0,
+    "gui-modern-check": 0,
+    "dll-check": 0
+  },
+  "wine_final_stderr": {
+    "ui-language-check": {
+      "bytes": 134,
+      "sha256": "da9f5fcf7577de9519d072f56d954b298437279f80496bd53f028427701a0b7e",
+      "qemu_sigsegv_message": true,
+      "fontconfig_message": false
+    },
+    "history-exit-check": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "qemu_sigsegv_message": false,
+      "fontconfig_message": false
+    },
+    "gui-modern-check": {
+      "bytes": 67,
+      "sha256": "354ad20c5dd86b42b08bd20ed0044750cb3c8ee7a3b05171cb143171d62c5945",
+      "qemu_sigsegv_message": true,
+      "fontconfig_message": false
+    },
+    "dll-check": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "qemu_sigsegv_message": false,
+      "fontconfig_message": false
+    }
+  },
+  "wine_sigsegv_source_identified": false,
+  "wine_remote_column_memory_probe": "own-process WriteProcessMemory denied with ERROR_ACCESS_DENIED; column labels verified in process and native Windows screenshots",
+  "unchanged_runtime_sources": {
+    "baseline_commit": "af9c89952cb4f58b0d970c5638ce97fa6c7d5c47",
+    "same_as_baseline": true,
+    "source_sha256": {
+      "src/runtime.cpp": "8bbf3351e780a04c28624f17038989ebf80e5660bd26653d5089ce795c3f1bae",
+      "src/settings.cpp": "727ea53928d9248acd765f1c6499af336e8039849957d741033f0b0da8d60f08",
+      "include/candidate_history.h": "225a22bd4bbaf0dc70829d125deab3c4e3a4f2de442b5b297e16bdb4988e3807"
+    }
+  },
+  "historical_native_evidence": {
+    "version": "0.1.0-candidate.6",
+    "receipt": "downloads/0.1.0-candidate.6/package-receipt.json",
+    "native_checks": 89,
+    "metadata_wifi_checks": 77,
+    "rerun_this_checkpoint": false
+  },
+  "exclude_wifi_default": false,
+  "exclude_wifi_option_saved_separately": true,
+  "wifi_accounts_added_to_persistent_blacklist": false,
+  "wifi_unknown_passes": true,
+  "unobserved_passive_peer_wifi_classification": false,
+  "wifi_cache_capacity": 4096,
+  "wifi_cache_retention_ms": 120000,
+  "candidate_retention_ms": 120000,
+  "gui_snapshot_capacity": 128,
+  "search_filter_capacity": 4096,
+  "battle_suspends_filtering": true,
+  "automatic_exit_status_and_bounded_fault_trace": true,
+  "original_assets_included": false,
+  "test_suite_included": false,
+  "binaries": {
+    "UNI2Blacklist.exe": "1dd963c520f1795989c7b8b5d340c110168fd77c8cfe62ead4db764ef701f420",
+    "uni2-blacklist.dll": "49a0e46b090cdcf2ea36036061aa78473f4dff6fc3e4920fb7134dd2e2231698"
+  }
+}
