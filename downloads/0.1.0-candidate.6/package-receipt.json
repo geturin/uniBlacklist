@@ -1,0 +1,108 @@
+{
+  "version": "0.1.0-candidate.6",
+  "source_commit": "8762df4c3c112fe297b5a1803428d0f800bc8895",
+  "compiler": "MinGW-w64 GCC 14 i686-w64-mingw32 static runtime",
+  "products": [
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.6-win32.zip",
+      "bytes": 695444,
+      "sha256": "4bcc2eb3ee46fa43d2ccf0831410a552f5927ba7a518d8803be4306ba184507f",
+      "file_count": 16
+    },
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.6-source.zip",
+      "bytes": 119589,
+      "sha256": "7481dc2d8df1f5d94089afb0dda7a26e7f83544777af51e9f39e52ef02409052",
+      "file_count": 44
+    }
+  ],
+  "supported_game_sha256": "4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9",
+  "supported_game_bytes": 6921216,
+  "steam_api_sha256": "67ae11d71ae6ec404090094df1e47b614d27400dc53fa450023e6fbcf347902c",
+  "steam_dll_unchanged_source": "user confirmation; existing runtime fingerprint remains enforced",
+  "scene_rva": "0x5a4a84",
+  "unique_hook_signatures_verified": 5,
+  "ipc_abi": 3,
+  "game_execution": false,
+  "native_windows_game_validation": false,
+  "native_windows_product_validation": "required workflow gate before release; result in delivery-receipt.json",
+  "wine_native_control_checks": 89,
+  "wine_metadata_wifi_control_checks": 77,
+  "wine_history_exit_control_checks": 41,
+  "wine_gui_operation_checks": 18,
+  "packaged_dll_load_and_reject_check": true,
+  "old_abi_request_rejected": true,
+  "wine_control_exit_codes": {
+    "native-check": 0,
+    "metadata-check": 0,
+    "history-exit-check": 0,
+    "gui-check": 0,
+    "dll-check": 0
+  },
+  "wine_final_stderr": {
+    "native-check": {
+      "bytes": 67,
+      "sha256": "354ad20c5dd86b42b08bd20ed0044750cb3c8ee7a3b05171cb143171d62c5945",
+      "qemu_sigsegv_message": true
+    },
+    "metadata-check": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "qemu_sigsegv_message": false
+    },
+    "history-exit-check": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "qemu_sigsegv_message": false
+    },
+    "gui-check": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "qemu_sigsegv_message": false
+    },
+    "dll-check": {
+      "bytes": 67,
+      "sha256": "354ad20c5dd86b42b08bd20ed0044750cb3c8ee7a3b05171cb143171d62c5945",
+      "qemu_sigsegv_message": true
+    }
+  },
+  "wine_sigsegv_source_identified": false,
+  "quick_match_crash_root_cause_confirmed": false,
+  "real_game_candidate4_search_blocking": "user reported success; not cloud live-game validation",
+  "original_serialization_isolated_controls": 8,
+  "original_parser_isolated_controls": 8,
+  "previous_parser_valid_records_rejected": 8,
+  "previous_parser_wrong_account_records_accepted": 4,
+  "connection_wire_formats": [
+    "ranked publisher at 0x7c; BE16 Wi-Fi at 0x78",
+    "room length272/Base64/decoded202 publisher at 0xc2; BE16 Wi-Fi at 0xc0"
+  ],
+  "publisher_identity_binding_fixed": true,
+  "previous_candidate5_controls_shared_identities": true,
+  "name_source": "completed game CP_ACP cache; no additional persona query",
+  "metadata_queries_temporarily_disabled": false,
+  "producer_additional_sdk_queries": false,
+  "latency": "cached Steam PingLocation path estimate in ms; unadjusted; not measured RTT",
+  "latency_minimum_read_interval_per_account_and_lobby_ms": 5000,
+  "latency_max_candidates_per_worker_iteration": 1,
+  "exclude_wifi_default": false,
+  "exclude_wifi_option_saved_separately": true,
+  "wifi_accounts_added_to_persistent_blacklist": false,
+  "wifi_unknown_passes": true,
+  "unobserved_passive_peer_wifi_classification": false,
+  "wifi_cache_capacity": 4096,
+  "wifi_cache_retention_ms": 120000,
+  "candidate_retention_ms": 120000,
+  "gui_snapshot_capacity": 128,
+  "search_filter_capacity": 4096,
+  "fresh_empty_policy_extra_native_and_network_hooks_installed": false,
+  "battle_suspends_filtering": true,
+  "fine_connection_icon_variant_mapping_complete": false,
+  "automatic_exit_status_and_bounded_fault_trace": true,
+  "original_assets_included": false,
+  "test_suite_included": false,
+  "binaries": {
+    "UNI2Blacklist.exe": "bd872026be2a0f02a58c8699e1e0731668ac76a31d5f32dbe11349c3dfcced7b",
+    "uni2-blacklist.dll": "7341f4863058dc3744335d7dfc8a326c04f001e5642bbeb5382a4c3c9e5bbe2a"
+  }
+}
