@@ -25,7 +25,7 @@ jobs:
       - name: Verify packaged hashes and extract candidate
         shell: pwsh
         run: |
-          python -c "import os,pathlib,json,hashlib,zipfile; v=os.environ['PACKAGE_VERSION']; p=pathlib.Path('downloads')/v; r=json.loads((p/'package-receipt.json').read_text()); [(_ for _ in ()).throw(AssertionError(x['filename'])) for x in r['products'] if hashlib.sha256((p/x['filename']).read_bytes()).hexdigest()!=x['sha256']]; z=zipfile.ZipFile(p/('UNI2Blacklist-'+v+'-win32.zip')); assert z.testzip() is None; z.extractall('windows-candidate')"
+          python -c "import os,pathlib,json,hashlib,zipfile; v=os.environ['PACKAGE_VERSION']; p=pathlib.Path('downloads')/v; r=json.loads((p/'package-receipt.json').read_text(encoding='utf-8')); [(_ for _ in ()).throw(AssertionError(x['filename'])) for x in r['products'] if hashlib.sha256((p/x['filename']).read_bytes()).hexdigest()!=x['sha256']]; z=zipfile.ZipFile(p/('UNI2Blacklist-'+v+'-win32.zip')); assert z.testzip() is None; z.extractall('windows-candidate')"
       - name: Exercise actual Windows GUI and fail-closed DLL entry
         shell: pwsh
         run: |
@@ -216,7 +216,7 @@ jobs:
           Write-Output 'Windows PE32 DLL load, actual export, null/ABI2/non-game rejection: passed'
           '@
           $env:UB_PRODUCT_DLL = Join-Path $taskProduct 'uni2-blacklist.dll'
-          $taskProbe | Set-Content -Encoding utf8 'windows-candidate/dll-probe.ps1'
+          $taskProbe | Set-Content -Encoding utf8BOM 'windows-candidate/dll-probe.ps1'
           & "$env:WINDIR/SysWOW64/WindowsPowerShell/v1.0/powershell.exe" -NoProfile -ExecutionPolicy Bypass -File 'windows-candidate/dll-probe.ps1'
           if ($LASTEXITCODE -ne 0) { throw "PE32 DLL check failed: $LASTEXITCODE" }
           Write-Output 'Windows compact bilingual GUI: removed manual controls, live main/activity translation, language persistence, independent Wi-Fi options, activity open/clear/close, blocklist removal, normal exit: passed'
@@ -253,7 +253,7 @@ jobs:
           original = pathlib.Path('downloads') / version
           repo = os.environ['GITHUB_REPOSITORY']
           commit = os.environ['GITHUB_SHA']
-          receipt = json.loads((original / 'package-receipt.json').read_text())
+          receipt = json.loads((original / 'package-receipt.json').read_text(encoding='utf-8'))
           assert receipt['version'] == version and len(receipt['products']) == 2
           names = {p['filename'] for p in receipt['products']}
           assert len(names) == 2 and all(pathlib.Path(n).name == n for n in names)
