@@ -1,0 +1,30 @@
+{
+  "timestamp_utc": "2026-10-08T04:39:06.992290+00:00",
+  "version": "0.1.0-candidate.5",
+  "source_commit": "9d030be8a86fc68f85bc8b8ca2dfffa8966e4bfd",
+  "publication_commit": "d6596ece8e710d2a6159e86fd474e591fb2ef0be",
+  "workflow_run_url": "https://github.com/geturin/uniBlacklist/actions/runs/37728394893",
+  "native_windows_product_validation": true,
+  "original_game_execution": false,
+  "live_steam_validation": false,
+  "products": [
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.5-win32.zip",
+      "bytes": 688016,
+      "sha256": "8ae5e6786ffaeabf1bcdfa799be9e78e8ab4d9096be34b18229997f3263e1294",
+      "file_count": 14,
+      "download_url": "https://github.com/geturin/uniBlacklist/releases/download/v0.1.0-candidate.5/UNI2Blacklist-0.1.0-candidate.5-win32.zip",
+      "http_status": 200,
+      "zip_crc_verified": true
+    },
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.5-source.zip",
+      "bytes": 109646,
+      "sha256": "2162c8f3966ad68bf824297a0b900ec4b558a1c9d688d69007a13523a39928a0",
+      "file_count": 41,
+      "download_url": "https://github.com/geturin/uniBlacklist/releases/download/v0.1.0-candidate.5/UNI2Blacklist-0.1.0-candidate.5-source.zip",
+      "http_status": 200,
+      "zip_crc_verified": true
+    }
+  ]
+}
