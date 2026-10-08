@@ -1,0 +1,44 @@
+{
+  "version": "0.1.0-candidate.3",
+  "source_commit": "36b06a15c9d367381fb0e8fc0f69df0be1232d66",
+  "compiler": "MinGW-w64 GCC 14 i686-w64-mingw32 static runtime",
+  "products": [
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.3-win32.zip",
+      "bytes": 665527,
+      "sha256": "dc704a0f0226f15c09f3a12dcefa0ec26fce8fd111ed6a06d7cafbd4acf6ddf7",
+      "file_count": 10
+    },
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.3-source.zip",
+      "bytes": 87817,
+      "sha256": "ca866179af2d5d15c1818470d7485b332efa2a658645e1964db0dcaad36c199b",
+      "file_count": 35
+    }
+  ],
+  "game_execution": false,
+  "native_windows_game_validation": false,
+  "wine_native_control_checks": 85,
+  "wine_history_exit_control_checks": 32,
+  "wine_gui_operation_checks": 14,
+  "packaged_dll_load_and_reject_check": true,
+  "old_abi_request_rejected": true,
+  "wine_previous_candidate_gui_stderr_sigsegv_unattributed": true,
+  "wine_final_gui_stderr_empty": false,
+  "wine_final_native_control_stderr_sigsegv_unattributed": true,
+  "wine_final_gui_history_control_stderr_sigsegv_unattributed": true,
+  "wine_final_packaged_gui_control_stderr_sigsegv_unattributed": true,
+  "wine_final_packaged_dll_stderr_empty": true,
+  "quick_match_crash_root_cause_confirmed": false,
+  "quick_match_crash_resolved_on_native_windows": false,
+  "metadata_queries_temporarily_disabled": true,
+  "candidate_retention_ms": 120000,
+  "fresh_empty_policy_extra_native_and_network_hooks_installed": false,
+  "automatic_exit_status_and_bounded_fault_trace": true,
+  "original_assets_included": false,
+  "test_suite_included": false,
+  "binaries": {
+    "UNI2Blacklist.exe": "2442880e6fa2210f8dd95f5f1aa753ab3a2ba9f0b5ca52bc8ff66e0498cda441",
+    "uni2-blacklist.dll": "aa4a0a38d0161587712ad86bd582fb6ea301967359bb9c9e2a45309a94e62ef3"
+  }
+}
