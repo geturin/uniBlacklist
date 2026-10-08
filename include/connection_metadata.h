@@ -36,10 +36,13 @@ inline bool UbDecodeRoom(const uint8_t* bytes,size_t size,uint8_t (&out)[202]) {
 inline uint8_t UbConnectionFromWire(const uint8_t* bytes,size_t size,uint64_t owner_id) {
     if (!bytes || !UbPlayerId(owner_id)) return UB_CONNECTION_UNKNOWN;
     // Ranked producer 0x5f9e40/parser 0x5f9ac0; room producer 0x5f8aa0/parser 0x5f8610.
-    // Bind the format to the embedded owner's exact ID, rather than guessing the scene.
-    bool ranked=size>=0x84 && UbNetworkId(bytes+0x1a)==owner_id;
+    // The earlier identity is a matchmaking target, not the publishing account.
+    // Ranked 0x5f9e40 writes the publisher (0xc49328) in the trailing 8 bytes;
+    // room 0x5f8aa0 likewise writes object+0x240 after its Wi-Fi field.
+    // Bind only that publisher to the search row's exact owner ID.
+    bool ranked=size>=0x84 && UbNetworkId(bytes+0x7c)==owner_id;
     uint8_t decoded[202]{};
-    bool room=UbDecodeRoom(bytes,size,decoded) && UbNetworkId(decoded+0x24)==owner_id;
+    bool room=UbDecodeRoom(bytes,size,decoded) && UbNetworkId(decoded+0xc2)==owner_id;
     if (ranked==room) return UB_CONNECTION_UNKNOWN;
     const uint8_t* record=ranked?bytes:decoded;
     size_t offset=ranked?0x78:0xc0;

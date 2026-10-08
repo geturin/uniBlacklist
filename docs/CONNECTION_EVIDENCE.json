@@ -5,13 +5,17 @@
     {
       "wifi": 0,
       "length": 132,
-      "owner_offset": 26,
+      "owner_offset": 124,
+      "other_identity_offset": 26,
+      "other_identity_differs": true,
       "wifi_offset": 120
     },
     {
       "wifi": 1,
       "length": 132,
-      "owner_offset": 26,
+      "owner_offset": 124,
+      "other_identity_offset": 26,
+      "other_identity_differs": true,
       "wifi_offset": 120
     },
     {
@@ -20,7 +24,9 @@
       "length": 274,
       "encoded_length": 272,
       "decoded_length": 202,
-      "owner_offset": 36,
+      "owner_offset": 194,
+      "other_identity_offset": 36,
+      "other_identity_differs": true,
       "wifi_offset": 192
     },
     {
@@ -29,12 +35,46 @@
       "length": 274,
       "encoded_length": 272,
       "decoded_length": 202,
-      "owner_offset": 36,
+      "owner_offset": 194,
+      "other_identity_offset": 36,
+      "other_identity_differs": true,
       "wifi_offset": 192
+    },
+    {
+      "format": "ranked",
+      "wifi": 0,
+      "length": 132,
+      "owner_offset": 124,
+      "other_identity_offset": 26,
+      "other_identity_zero": true
+    },
+    {
+      "format": "ranked",
+      "wifi": 1,
+      "length": 132,
+      "owner_offset": 124,
+      "other_identity_offset": 26,
+      "other_identity_zero": true
+    },
+    {
+      "format": "room",
+      "wifi": 0,
+      "length": 274,
+      "owner_offset": 194,
+      "other_identity_offset": 36,
+      "other_identity_zero": true
+    },
+    {
+      "format": "room",
+      "wifi": 1,
+      "length": 274,
+      "owner_offset": 194,
+      "other_identity_offset": 36,
+      "other_identity_zero": true
     }
   ],
   "original_game_process_started": false,
-  "version": "0.1.0-candidate.5",
+  "version": "0.1.0-candidate.6",
   "original_room_producer": "0x5f8aa0",
   "record_encoding": {
     "ranked": "direct, 132 bytes",
@@ -61,5 +101,18 @@
   },
   "original_machine_code_or_assets_included": false,
   "live_steam_validation": false,
-  "fine_icon_variant_mapping": "unknown; see CONNECTION_STATES.zh-CN.md"
+  "fine_icon_variant_mapping": "unknown; see CONNECTION_STATES.zh-CN.md",
+  "original_consumer_controls": 8,
+  "ranked_publisher_parser_offset": "0xa0",
+  "room_publisher_parser_offset": "0x240",
+  "candidate5_binding_error": {
+    "ranked_wrong_identity_offset": "0x1a",
+    "room_wrong_decoded_identity_offset": "0x24",
+    "ranked_correct_publisher_offset": "0x7c",
+    "room_correct_decoded_publisher_offset": "0xc2",
+    "baseline_original_producer_records_wrongly_rejected": 8,
+    "baseline_records_bound_to_wrong_earlier_account": 4,
+    "previous_controls_shared_both_identities": true
+  },
+  "consumer_control_stubs": "standard memory functions and game name helper; no live Steam; original producer/parser instructions for checked fields"
 }

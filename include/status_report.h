@@ -18,6 +18,14 @@ inline std::string UbStatusReport(const UbShared& snapshot,DWORD pid,const std::
     field("scene",snapshot.host_scene);field("battle_suspended",snapshot.battle_suspended);field("blacklist_count",snapshot.blocked_count);
     field("exclude_wifi",snapshot.exclude_wifi);field("wifi_cache_count",snapshot.wifi_cache_count);
     field("ping_queries",snapshot.ping_queries);field("ping_known_count",snapshot.ping_known_count);
+    uint32_t wired=0,wifi=0,observed=0;
+    for (uint32_t i=0;i<snapshot.candidate_count && i<UB_MAX_CANDIDATES;i++) {
+        ++observed;
+        wired+=snapshot.candidates[i].connection_type==UB_CONNECTION_WIRED;
+        wifi+=snapshot.candidates[i].connection_type==UB_CONNECTION_WIFI;
+    }
+    field("connection_wired_count",wired);field("connection_wifi_count",wifi);
+    field("connection_unknown_count",observed-wired-wifi);
     field("search_count",snapshot.search_count);field("candidate_count",snapshot.candidate_count);field("omitted",snapshot.omitted_count);
     field("candidate_skips",snapshot.candidate_skips);field("request_rejects",snapshot.request_rejects);field("send_rejects",snapshot.send_rejects);
     field("receive_drops",snapshot.receive_drops);field("metadata_errors",snapshot.metadata_errors);

@@ -1,14 +1,14 @@
 # UNI2Blacklist
 
-Windows GUI 黑名单插件，当前版本 `0.1.0-candidate.5`，适配本次更新 EXE 的候选版。按完整 SteamID64 过滤匹配候选、房间事件及 Steam 通信；原游戏 EXE 和 Steam DLL 的磁盘文件不改写。
+Windows GUI 黑名单插件，当前版本 `0.1.0-candidate.6`，适配本次更新 EXE 的候选版。按完整 SteamID64 过滤匹配候选、房间事件及 Steam 通信；原游戏 EXE 和 Steam DLL 的磁盘文件不改写。
 
-用户已确认 candidate.4 在新版 EXE 上拉黑后搜索不再返回该账号。本轮恢复玩家名和估计延迟，增加 Wi-Fi 分类与独立排除选项。candidate.2 旧闪退的具体根因仍未知；本轮验证范围不等同于真实游戏稳定性验收。[修正与未知点](docs/QUICK_MATCH_CRASH.zh-CN.md)、[验证范围](docs/VALIDATION.zh-CN.md)、[原生接口合同](docs/NATIVE_CONTRACT.zh-CN.md)。旧版本及下载保留，不建议继续用 candidate.2 重复触发该闪退。
+用户已确认搜索拉黑生效，candidate.5 的玩家名和延迟恢复，但 Wi-Fi 全部未知。本轮修正把匹配设置中的 ID 错当成发布者 ID 的解析错误；发布者实际位于记录末尾。保留姓名、延迟和独立 Wi-Fi 排除选项。[原因与复现](docs/WIFI_IDENTITY_FIX.zh-CN.md)。candidate.2 旧闪退的具体根因仍未知；本轮验证范围不等同于真实游戏稳定性验收。[修正与未知点](docs/QUICK_MATCH_CRASH.zh-CN.md)、[验证范围](docs/VALIDATION.zh-CN.md)、[原生接口合同](docs/NATIVE_CONTRACT.zh-CN.md)。旧版本及下载保留，不建议继续用 candidate.2 重复触发该闪退。
 
-本轮沿用已适配的新 EXE 指纹和场景 RVA `0x5A4A84`、五个匹配入口、动态排位观察、两分钟历史及退出诊断。连接类型与图标的分析见 [状态分类](docs/CONNECTION_STATES.zh-CN.md)。[EXE 适配证据](docs/EXE_UPDATE.zh-CN.md)。用户确认 Steam DLL 未更新，继续校验原 DLL 指纹。candidate.5 仅接受下方新版 EXE；旧版下载保留。
+本轮沿用已适配的新 EXE 指纹和场景 RVA `0x5A4A84`、五个匹配入口、动态排位观察、两分钟历史及退出诊断。连接类型与图标的分析见 [状态分类](docs/CONNECTION_STATES.zh-CN.md)。[EXE 适配证据](docs/EXE_UPDATE.zh-CN.md)。用户确认 Steam DLL 未更新，继续校验原 DLL 指纹。candidate.6 仅接受下方新版 EXE；旧版下载保留。
 
 ## 下载及使用
 
-从仓库 Releases 下载 `UNI2Blacklist-0.1.0-candidate.5-win32.zip`，完整解压，不要在 ZIP 内运行。静态链接运行库，无需安装 Python。
+从仓库 Releases 下载 `UNI2Blacklist-0.1.0-candidate.6-win32.zip`，完整解压，不要在 ZIP 内运行。静态链接运行库，无需安装 Python。
 
 1. **关闭旧黑名单窗口并重启游戏一次**；关闭 GUI 不卸载已注入 DLL，升级不能在同一游戏进程热替换。名单文件沿用。通过 Steam 正常启动游戏，运行 `UNI2Blacklist.exe`，选择进程并点击“连接并启用”。权限应与游戏一致。
 2. 首次保持黑名单为空且不勾选“排除 Wi-Fi 玩家”进入快速匹配。此时应显示观察模式；新启动的进程 `hooks_ready=0`、`native_filter_active=0`、`effective_enabled=0` 正常，表示没有安装通信挂钩，**不表示安装失败**。仅搜索观察入口已接入。关闭保护开关也不进行过滤。
@@ -28,6 +28,7 @@ Windows GUI 黑名单插件，当前版本 `0.1.0-candidate.5`，适配本次更
 - 报告区分界面请求开关、原生入口过滤、完整保护，以及 `connected`、`snapshot_source`。游戏退出后保留旧安装位，但两个有效保护字段强制为0，不能把旧状态当作当前保护。
 - `hooks_ready` 是已经安装的通信接口位掩码：1=旧 P2P，2=Messages002，3=两者。首次黑名单为空且未勾选 Wi-Fi 排除时应为0；曾添加名单后清空，位可以仍为3，但有效过滤为0。
 - `exclude_wifi` 是当前 Wi-Fi 规则开关，`wifi_cache_count` 是当前临时分类数量；`ping_queries` 是背景线程实际读取缓存 PingLocation 的次数，`ping_known_count` 是当前快照有估计值的人数。没有玩家身份明文。
+- connection_wired_count、connection_wifi_count、connection_unknown_count 是当前快照的三类人数（最多128），不输出账号或原数据。
 - 报告含 PID、搜索次数、最后场景、进程退出码，以及本地异常代码、指令地址、故障地址、线程、阶段和可识别模块名/RVA。模块缓存来自连接时，晚加载或动态代码可能只显示地址与分配基址。
 - 异常记录是**第一时间观察到的异常，未必致命**；记录后总继续原异常分发，不恢复故障、不吞掉异常，也不替换游戏的异常处理器。最近8条循环覆盖，不包含堆转储、完整寄存器、堆栈内容或玩家账号。强制终止、部分 fail-fast、栈损坏及记录文件失败可能没有异常条目；没有条目不代表没有崩溃。
 - 诊断文本不输出名单账号、玩家名、IP；连接错误可能含本机路径。全部数据只存本地，插件没有日志上传功能。本项目不修改注册表、Windows 防火墙或系统错误报告设置。
@@ -61,4 +62,4 @@ GUI 核验目标文件与运行映像，在目标进程调用 Windows `LoadLibra
 python build.py --cc i686-w64-mingw32-gcc --cxx i686-w64-mingw32-g++
 ```
 
-产物：`build/UNI2Blacklist-0.1.0-candidate.5-win32/`。GitHub 和发布包不包含原游戏文件、资源、实际个人日志、名单或凭据；按用户要求不发布测试集。代码采用 MIT，MinHook 保留许可证和来源指纹。
+产物：`build/UNI2Blacklist-0.1.0-candidate.6-win32/`。GitHub 和发布包不包含原游戏文件、资源、实际个人日志、名单或凭据；按用户要求不发布测试集。代码采用 MIT，MinHook 保留许可证和来源指纹。
