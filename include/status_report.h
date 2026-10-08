@@ -8,6 +8,7 @@ inline std::string UbStatusReport(const UbShared& snapshot,DWORD pid,const std::
     std::string s="UNI2Blacklist "+std::string(UB_VERSION)+"\r\nEXE SHA256: "+std::string(UB_GAME_SHA)+
         "\r\nSteam DLL SHA256: "+UB_STEAM_SHA+"\r\n";
     auto field=[&](const char* k,uint32_t v){s+=std::string(k)+": "+std::to_string(v)+"\r\n";};
+    field("scene_rva",UB_SCENE_RVA);
     field("connected",connected);field("pid",pid);field("state",snapshot.state);field("status",snapshot.status);field("hooks_ready",snapshot.network_hooks_ready);
     field("requested_enabled",snapshot.enable);
     field("native_filter_active",connected && snapshot.enable && snapshot.blocked_count && snapshot.state==UB_READY && snapshot.status==UB_OK && !snapshot.battle_suspended && snapshot.filter_active && DWORD(now-snapshot.heartbeat)<=3000 && snapshot.policy_ack==snapshot.policy_revision);

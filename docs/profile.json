@@ -1,12 +1,12 @@
 {
-  "exe_sha256": "cf64ec26e9646b68b46ed22c838b8f0778ab65abbeda0ebf164e81b5c08c9098",
+  "exe_sha256": "4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9",
   "preferred_base": "0x400000",
   "targets": [
     {
       "name": "search_results",
       "va": "0x4f5470",
       "rva": "0xf5470",
-      "signature32": "558bec6aff68888e900064a1000000005081ecf40c0000a1dc3b9a0033c58945",
+      "signature32": "558bec6aff68288f900064a1000000005081ecf40c0000a1dc3b9a0033c58945",
       "HIGHLOW_mask32": "ffffffffffff00000000ffffffffffffffffffffffffffff00000000ffffffff"
     },
     {
@@ -38,5 +38,11 @@
       "HIGHLOW_mask32": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     }
   ],
-  "scope": "static signatures; native Windows real-game injection not validated"
+  "scope": "static signatures; native Windows real-game injection not validated",
+  "exe_bytes": 6921216,
+  "version": "0.1.0-candidate.4",
+  "steam_api_sha256": "67ae11d71ae6ec404090094df1e47b614d27400dc53fa450023e6fbcf347902c",
+  "scene_va": "0x9a4a84",
+  "scene_rva": "0x5a4a84",
+  "battle_scene": 1
 }

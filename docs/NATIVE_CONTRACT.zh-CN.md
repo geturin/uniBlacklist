@@ -54,7 +54,7 @@ IPC ABI 升至2（Local\UNI2Blacklist-v2-PID），不能与旧 GUI/DLL 混用；
 
 ## 场景与未完成证据
 
-全局 `0x9a4764` 是原外层场景；既有原生分析中 1=Battle，12=Result，15=VS entry。读取不到场景时保守暂停拦截。此版没有改 battle 函数、GGPO 参数或录像计算。
+candidate.4 全局 `0x9a4a84`（RVA `0x5a4a84`）是原外层场景；candidate.1–3 使用旧 EXE 地址 `0x9a4764`。新版325处场景引用与旧版替换地址后逐条相同；既有原生分析中 1=Battle，12=Result，15=VS entry。读取不到场景时保守暂停拦截。此版没有改原游戏的战斗计算、GGPO 参数或录像计算。
 
 仍需真实 Windows 实测确认：
 
@@ -69,6 +69,10 @@ IPC ABI 升至2（Local\UNI2Blacklist-v2-PID），不能与旧 GUI/DLL 混用；
 
 ## candidate.3 生命周期补充
 
-首次黑名单为空只安装搜索入口（native index0）；native index1–4及两套通信组仅在启用、心跳有效、非空黑名单、非战斗后安装。仍用ABI2，但GUI/DLL必须同候选版本并重启游戏升级。network位0在观察模式正常，不代表错误；有效保护还要求非空黑名单。关闭/清黑名单为空不卸载既有入口，直接委派原调用。
+首次黑名单为空只安装搜索入口（native index0）；native index1–4及两套通信组仅在启用、心跳有效、非空黑名单、非战斗后安装。仍用ABI2，但GUI/DLL必须同候选版本并重启游戏升级。network位0在观察模式正常，不代表错误；有效保护还要求非空黑名单。关闭开关或清空黑名单不卸载既有入口，直接委派原调用。
 
 搜索捕获不再额外查询Steam姓名/Ping，当前元数据为未知；堆缓存与原函数调用分帧。GUI历史最多2048行、120秒，不影响原eligible索引生命周期。退出报告保留最后状态并显式 disconnected；新增独立本地64字节异常记录合同见 [快速匹配调查](QUICK_MATCH_CRASH.zh-CN.md)。
+
+## candidate.4 EXE 适配
+
+支持指纹更新为 `4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9`，GUI与DLL共用该常量。场景报告与暂停拦截共用 `UB_SCENE_RVA=0x5a4a84`，旧 RVA 不继续读取。五个 hook 的VA/ABI/掩码不变，signature32按新文件重新生成；Steam上下文及接口约定仍沿用，Steam DLL继续严格校验原SHA。完整比较与验证边界见 [EXE适配记录](EXE_UPDATE.zh-CN.md)。此适配不代表既有快速匹配闪退已消除。

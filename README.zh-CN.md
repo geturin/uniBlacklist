@@ -1,12 +1,14 @@
 # UNI2Blacklist
 
-Windows GUI 黑名单插件，当前版本 `0.1.0-candidate.3`，针对**黑名单为空快速匹配闪退**的诊断候选版。按完整 SteamID64 过滤匹配候选、房间事件及 Steam 通信；原游戏 EXE 和 Steam DLL 的磁盘文件不改写。
+Windows GUI 黑名单插件，当前版本 `0.1.0-candidate.4`，适配本次更新 EXE 的候选版。按完整 SteamID64 过滤匹配候选、房间事件及 Steam 通信；原游戏 EXE 和 Steam DLL 的磁盘文件不改写。
 
 **真实 Windows 闪退的根因尚未定位，也未证明已经消除。** 用户报告 candidate.2 黑名单为空快速匹配两三秒后游戏退出、搜索计数1；云端未运行原游戏。新版缩减观察模式的挂钩范围、移除搜索中的额外 Steam 查询，并保留退出证据。[修正与未知点](docs/QUICK_MATCH_CRASH.zh-CN.md)、[验证范围](docs/VALIDATION.zh-CN.md)、[原生接口合同](docs/NATIVE_CONTRACT.zh-CN.md)。旧版本及下载保留，不建议继续用 candidate.2 重复触发该闪退。
 
+本轮更新：新版 EXE 指纹和场景 RVA `0x5A4A84`；五个匹配入口继续沿用并重新核对签名，保留动态排位观察、两分钟历史及退出诊断。[EXE 适配证据](docs/EXE_UPDATE.zh-CN.md)。用户确认 Steam DLL 未更新，继续校验原 DLL 指纹。candidate.4 仅接受下方新版 EXE；旧版下载保留。
+
 ## 下载及使用
 
-从仓库 Releases 下载 `UNI2Blacklist-0.1.0-candidate.3-win32.zip`，完整解压，不要在 ZIP 内运行。静态链接运行库，无需安装 Python。
+从仓库 Releases 下载 `UNI2Blacklist-0.1.0-candidate.4-win32.zip`，完整解压，不要在 ZIP 内运行。静态链接运行库，无需安装 Python。
 
 1. **关闭旧黑名单窗口并重启游戏一次**；关闭 GUI 不卸载已注入 DLL，升级不能在同一游戏进程热替换。名单文件沿用。通过 Steam 正常启动游戏，运行 `UNI2Blacklist.exe`，选择进程并点击“连接并启用”。权限应与游戏一致。
 2. 首先保持黑名单为空进入快速匹配。此时应显示观察模式；新启动的进程 `hooks_ready=0`、`native_filter_active=0`、`effective_enabled=0` 正常，表示没有安装通信挂钩，**不表示安装失败**。仅搜索观察入口已接入。关闭保护开关也不进行过滤。
@@ -38,7 +40,7 @@ Windows GUI 黑名单插件，当前版本 `0.1.0-candidate.3`，针对**黑名�
 
 | 文件 | SHA-256 |
 | --- | --- |
-| `uni2.exe`（6,921,216字节，PE32） | `cf64ec26e9646b68b46ed22c838b8f0778ab65abbeda0ebf164e81b5c08c9098` |
+| `uni2.exe`（6,921,216字节，PE32） | `4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9` |
 | `steam_api.dll` | `67ae11d71ae6ec404090094df1e47b614d27400dc53fa450023e6fbcf347902c` |
 
 其他版本拒绝连接；已改动的游戏入口会被签名校验拒绝。
@@ -55,4 +57,4 @@ GUI 核验目标文件与运行映像，在目标进程调用 Windows `LoadLibra
 python build.py --cc i686-w64-mingw32-gcc --cxx i686-w64-mingw32-g++
 ```
 
-产物：`build/UNI2Blacklist-0.1.0-candidate.3-win32/`。GitHub 和发布包不包含原游戏文件、资源、实际个人日志、名单或凭据；按用户要求不发布测试集。代码采用 MIT，MinHook 保留许可证和来源指纹。
+产物：`build/UNI2Blacklist-0.1.0-candidate.4-win32/`。GitHub 和发布包不包含原游戏文件、资源、实际个人日志、名单或凭据；按用户要求不发布测试集。代码采用 MIT，MinHook 保留许可证和来源指纹。

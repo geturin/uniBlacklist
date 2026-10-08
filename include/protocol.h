@@ -3,12 +3,13 @@
 #include <stdint.h>
 
 constexpr uint32_t UB_ABI = 2;
-constexpr char UB_VERSION[] = "0.1.0-candidate.3";
+constexpr char UB_VERSION[] = "0.1.0-candidate.4";
 constexpr uint32_t UB_MAGIC = 0x31424e55;
 constexpr uint32_t UB_MAX_BLOCKED = 256;
 constexpr uint32_t UB_MAX_CANDIDATES = 128;
-constexpr char UB_GAME_SHA[] = "cf64ec26e9646b68b46ed22c838b8f0778ab65abbeda0ebf164e81b5c08c9098";
+constexpr char UB_GAME_SHA[] = "4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9";
 constexpr char UB_STEAM_SHA[] = "67ae11d71ae6ec404090094df1e47b614d27400dc53fa450023e6fbcf347902c";
+constexpr uint32_t UB_SCENE_RVA = 0x5a4a84;
 
 enum UbState : uint32_t { UB_STARTING, UB_READY, UB_UNSUPPORTED, UB_ERROR };
 enum UbStatus : uint32_t { UB_OK, UB_BAD_REQUEST, UB_WRONG_IMAGE, UB_SIGNATURE,

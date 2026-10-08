@@ -57,7 +57,7 @@ void message(const char* s, UbState state, UbStatus status=UB_OK) {
 bool battle() {
     uint32_t scene=0;
     // An unreadable scene is conservatively treated as active battle.
-    return !UbGet(image+0x5a4764,scene) || scene==1;
+    return !UbGet(image+UB_SCENE_RVA,scene) || scene==1;
 }
 bool blocked(uint64_t id) {
     if (!UbPlayerId(id) || InterlockedCompareExchange(&ready,0,0)!=1 || battle()) return false;
@@ -618,7 +618,7 @@ DWORD WINAPI worker(void*) {
                 strncpy(shared->message_utf8,"候选过滤已接入；等待通信接口，完整保护未生效。",sizeof(shared->message_utf8)-1);
             else memcpy(shared->message_utf8,runtime_message,sizeof(runtime_message));
             shared->message_utf8[sizeof(shared->message_utf8)-1]=0;
-            shared->heartbeat=GetTickCount();UbGet(image+0x5a4764,shared->host_scene);
+            shared->heartbeat=GetTickCount();UbGet(image+UB_SCENE_RVA,shared->host_scene);
             shared->battle_suspended=battle();shared->network_hooks_ready=static_cast<uint32_t>(network_mask);
             shared->filter_active=filtering();
             shared->effective_enabled=shared->filter_active && native_policy_ready && network_mask==3 && !network_failed;

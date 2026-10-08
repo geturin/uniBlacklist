@@ -17,7 +17,6 @@
 
 namespace {
 constexpr wchar_t kDllName[] = L"uni2-blacklist.dll";
-constexpr char kExpectedSha[] = "cf64ec26e9646b68b46ed22c838b8f0778ab65abbeda0ebf164e81b5c08c9098";
 constexpr DWORD kWaitMs = 30000;
 constexpr uint64_t kExpectedBytes = 6921216;
 
@@ -336,7 +335,7 @@ DWORD UbAttach(DWORD pid) {
         if(!GetFileSizeEx(file.value,&size)||size.QuadPart!=static_cast<LONGLONG>(kExpectedBytes))fail(L"游戏版本不支持：EXE长度不匹配。");
         verify_pe32_file(file.value,kExpectedBytes);
         auto sha=sha256_file(file.value);
-        if(sha!=kExpectedSha)fail(L"游戏版本不支持，SHA256："+std::wstring(sha.begin(),sha.end()));
+        if(sha!=UB_GAME_SHA)fail(L"游戏版本不支持，SHA256："+std::wstring(sha.begin(),sha.end()));
         auto initial=modules(pid);auto game=find_module(initial,L"uni2.exe");
         if(!game||_wcsicmp(game->szExePath,path.c_str())!=0)fail(L"运行映像与核验文件不一致。");
         verify_remote_pe(process.value,*game);
