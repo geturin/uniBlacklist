@@ -45,8 +45,10 @@ jobs:
             [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out Rect r);
             [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
             [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+            [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
             [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h,IntPtr dc,uint f);
             public static IntPtr FindCandidate() { return FindWindow("UNI2BlacklistWindow", null); }
+            public static IntPtr FindActivity() { return FindWindow("UNI2BlacklistActivityWindow", null); }
             public static string Text(IntPtr h) { var b=new StringBuilder(256); GetWindowText(h,b,b.Capacity); return b.ToString(); }
             public static int Columns(IntPtr h) { return SendMessage(SendMessage(h,0x101f,IntPtr.Zero,IntPtr.Zero),0x1200,IntPtr.Zero,IntPtr.Zero).ToInt32(); }
           }
@@ -84,13 +86,17 @@ jobs:
             [void][ProductWindow]::SendMessage([ProductWindow]::GetDlgItem($app.Window,115),0xf5,[IntPtr]::Zero,[IntPtr]::Zero)
             $h=[IntPtr]::Zero
             for ($i=0; $i -lt 100; $i++) {
-              $h=[ProductWindow]::FindWindow('UNI2BlacklistActivityWindow',$null)
+              $h=[ProductWindow]::FindActivity()
               [uint32]$owner=0
               if ($h -ne [IntPtr]::Zero) { [void][ProductWindow]::GetWindowThreadProcessId($h,[ref]$owner) }
               if ($owner -eq $app.Process.Id -and [ProductWindow]::GetDlgItem($h,118) -ne [IntPtr]::Zero) { break }
               Start-Sleep -Milliseconds 50
             }
-            if ($h -eq [IntPtr]::Zero -or $owner -ne $app.Process.Id) { throw 'Request activity was not created by actual GUI' }
+            $button=[ProductWindow]::GetDlgItem($app.Window,115)
+            $list=[ProductWindow]::GetDlgItem($h,118)
+            if ($h -eq [IntPtr]::Zero -or $owner -ne $app.Process.Id -or $list -eq [IntPtr]::Zero) {
+              throw "Request activity was not found for actual GUI: HWND=$h, owner=$owner, pid=$($app.Process.Id), main=$($app.Window), button=$button, button-enabled=$([ProductWindow]::IsWindowEnabled($button)), list=$list"
+            }
             Assert-Title $h $title
             if ([ProductWindow]::GetDlgItem($h,116) -eq [IntPtr]::Zero -or [ProductWindow]::Columns([ProductWindow]::GetDlgItem($h,118)) -ne 3) { throw 'Activity clear button or columns are missing' }
             foreach ($id in 304..307) { if ([ProductWindow]::Text([ProductWindow]::GetDlgItem($h,$id)) -cne '0') { throw 'Unattached native cumulative count was invented' } }
