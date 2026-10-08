@@ -6,7 +6,7 @@ on:
       version:
         description: Committed candidate package version
         required: true
-        default: 0.1.0-candidate.2
+        default: 0.1.0-candidate.3
         type: string
 
 permissions:

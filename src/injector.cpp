@@ -372,3 +372,11 @@ DWORD UbAttach(DWORD pid) {
         throw std::runtime_error(text.c_str());
     }
 }
+
+std::vector<UbModule> UbListModules(DWORD pid) {
+    std::vector<UbModule> result;
+    try {
+        for (const auto& m:modules(pid)) result.push_back({static_cast<uint32_t>(reinterpret_cast<uintptr_t>(m.modBaseAddr)),m.modBaseSize,m.szModule});
+    } catch(const Failure&) {return {};}
+    return result;
+}

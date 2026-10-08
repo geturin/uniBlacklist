@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 constexpr uint32_t UB_ABI = 2;
-constexpr char UB_VERSION[] = "0.1.0-candidate.2";
+constexpr char UB_VERSION[] = "0.1.0-candidate.3";
 constexpr uint32_t UB_MAGIC = 0x31424e55;
 constexpr uint32_t UB_MAX_BLOCKED = 256;
 constexpr uint32_t UB_MAX_CANDIDATES = 128;
@@ -77,7 +77,7 @@ inline void UbNames(DWORD pid, wchar_t* mapping, wchar_t* mutex) {
     wsprintfW(mutex, L"Local\\UNI2Blacklist-v2-%lu-mutex", static_cast<unsigned long>(pid));
 }
 inline bool UbEffective(const UbShared& s,DWORD now) {
-    return s.effective_enabled && s.enable && s.state==UB_READY && s.status==UB_OK &&
+    return s.effective_enabled && s.enable && s.blocked_count && s.state==UB_READY && s.status==UB_OK &&
         s.network_hooks_ready==3 && !s.battle_suspended &&
         s.policy_ack==s.policy_revision && DWORD(now-s.heartbeat)<=3000;
 }

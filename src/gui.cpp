@@ -14,6 +14,8 @@
 #include <vector>
 #include "protocol.h"
 #include "status_report.h"
+#include "candidate_history.h"
+#include "fault_trace.h"
 #include "injector.h"
 #include "settings.h"
 
@@ -25,6 +27,9 @@ HFONT font;
 std::vector<UbProcess> processes;
 std::vector<UbEntry> entries;
 std::vector<UbCandidate> rows;
+UbCandidateHistory candidate_history;
+bool rows_dirty=true;
+DWORD rendered_second=UINT32_MAX;
 HANDLE map_handle=nullptr,ipc_mutex=nullptr,game_handle=nullptr;
 UbShared* shared=nullptr;
 UbShared snapshot{};
@@ -32,6 +37,10 @@ bool connecting=false,settings_failed=false;
 uint32_t sequence=UINT32_MAX;
 DWORD pid=0;
 std::wstring attachment_error;
+std::vector<UbModule> game_modules;
+bool game_exited=false,exit_code_known=false;
+DWORD game_exit_code=0;
+std::wstring last_report_path;
 struct Reply {DWORD pid=0;std::wstring error;};
 bool lock_ipc() {
     if (!ipc_mutex) return false;
@@ -90,7 +99,7 @@ void add(uint64_t id,std::wstring alias) {
     if (contains(id)) {error(L"该 SteamID64 已在黑名单中。");return;}
     if (entries.size()>=UB_MAX_BLOCKED) {error(L"黑名单最多保存 256 人。");return;}
     auto changed=entries;changed.push_back({id,alias});UbSaveSettings(changed);entries=std::move(changed);
-    rebuild_blacklist();policy();sequence=UINT32_MAX;
+    rebuild_blacklist();policy();rows_dirty=true;
 }
 void scan() {
     processes=UbFindGames();SendMessageW(process_box,CB_RESETCONTENT,0,0);
@@ -100,9 +109,9 @@ void scan() {
     }
     if (!processes.empty()) SendMessageW(process_box,CB_SETCURSEL,0,0);
     EnableWindow(attach_button,!connecting && !processes.empty());
-    if (!shared) set(status_label,processes.empty()?L"未连接：先用 Steam 启动游戏，再点击“查找游戏”。":L"选择游戏进程并连接。支持的 EXE 和 Steam DLL 指纹见随包说明。");
+    if (!shared && !game_exited) set(status_label,processes.empty()?L"未连接：先用 Steam 启动游戏，再点击“查找游戏”。":L"选择游戏进程并连接。支持的 EXE 和 Steam DLL 指纹见随包说明。");
 }
-void disconnect() {
+void disconnect(bool preserve=false) {
     if (shared) UnmapViewOfFile(shared);
     shared=nullptr;
     if (map_handle) CloseHandle(map_handle);
@@ -111,7 +120,11 @@ void disconnect() {
     ipc_mutex=nullptr;
     if (game_handle) CloseHandle(game_handle);
     game_handle=nullptr;
-    pid=0;snapshot={};sequence=UINT32_MAX;rows.clear();ListView_DeleteAllItems(candidates);
+    if (!preserve) {
+        pid=0;snapshot={};sequence=UINT32_MAX;rows.clear();candidate_history.clear();game_modules.clear();
+        game_exited=false;exit_code_known=false;game_exit_code=0;last_report_path.clear();
+        rows_dirty=true;rendered_second=UINT32_MAX;ListView_DeleteAllItems(candidates);
+    }
 }
 DWORD WINAPI attach_worker(void* arg) {
     DWORD target=static_cast<DWORD>(reinterpret_cast<uintptr_t>(arg));
@@ -139,20 +152,76 @@ void attached(Reply* raw) {
     bool valid=shared->magic==UB_MAGIC && shared->abi==UB_ABI && shared->bytes==sizeof(UbShared) && shared->pid==reply->pid;
     ReleaseMutex(ipc_mutex);
     if (!valid) {disconnect();error(L"插件控制通道的身份不匹配。");EnableWindow(attach_button,TRUE);return;}
-    pid=reply->pid;game_handle=OpenProcess(SYNCHRONIZE,FALSE,pid);
+    pid=reply->pid;game_handle=OpenProcess(SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);
     if (!game_handle) {disconnect();error(L"无法观察游戏退出状态。");EnableWindow(attach_button,TRUE);return;}
+    game_exited=false;exit_code_known=false;game_exit_code=0;last_report_path.clear();
+    rows.clear();candidate_history.clear();sequence=UINT32_MAX;rows_dirty=true;rendered_second=UINT32_MAX;
+    game_modules=UbListModules(pid);
+    if (lock_ipc()) {snapshot=*shared;ReleaseMutex(ipc_mutex);}
     attachment_error.clear();EnableWindow(attach_button,FALSE);set(attach_button,L"已连接");policy();
 }
+void refresh_candidates(DWORD now) {
+    if (sequence!=snapshot.capture_sequence) {
+        sequence=snapshot.capture_sequence;
+        candidate_history.observe(snapshot.candidates,snapshot.candidate_count,now);
+        rows_dirty=true;
+    }
+    if (candidate_history.expire(now)) rows_dirty=true;
+    if (!rows_dirty && rendered_second==now/1000) return;
+    const auto& recent=candidate_history.rows();
+    bool structure_changed=rows.size()!=recent.size();
+    if (!structure_changed) for (size_t i=0;i<rows.size();i++) {
+        if (rows[i].steam_id!=recent[i].candidate.steam_id) {structure_changed=true;break;}
+    }
+    uint64_t selected=0;int current=ListView_GetNextItem(candidates,-1,LVNI_SELECTED);
+    if (current>=0 && size_t(current)<rows.size()) selected=rows[size_t(current)].steam_id;
+    SendMessageW(candidates,WM_SETREDRAW,FALSE,0);
+    if (structure_changed) ListView_DeleteAllItems(candidates);
+    rows.clear();rows.reserve(recent.size());
+    for (size_t i=0;i<recent.size();i++) {
+        const auto& row=recent[i];const auto& c=row.candidate;rows.push_back(c);
+        std::wstring name=L"未知";
+        if ((c.flags&UB_NAME_KNOWN) && memchr(c.name_utf8,0,sizeof(c.name_utf8))) name=UbWide(c.name_utf8);
+        if (structure_changed) cell(candidates,int(i),0,name);
+        else ListView_SetItemText(candidates,int(i),0,const_cast<wchar_t*>(name.c_str()));
+        cell(candidates,int(i),1,std::to_wstring(c.steam_id));
+        cell(candidates,int(i),2,(c.flags&UB_PING_KNOWN)?std::to_wstring(c.estimated_ping_ms)+L" ms":L"未知");
+        cell(candidates,int(i),3,L"未知 / 未测");cell(candidates,int(i),4,std::to_wstring(c.lobby_id));
+        std::wstring state=contains(c.steam_id)?L"已拉黑 · ":L"未拉黑 · ";
+        state+=row.in_latest_result?L"本次返回":L"最近出现";
+        cell(candidates,int(i),5,state);
+        cell(candidates,int(i),6,std::to_wstring(DWORD(now-row.last_seen)/1000)+L" 秒前");
+        if (structure_changed && selected==c.steam_id)
+            ListView_SetItemState(candidates,int(i),LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
+    }
+    SendMessageW(candidates,WM_SETREDRAW,TRUE,0);InvalidateRect(candidates,nullptr,TRUE);
+    rows_dirty=false;rendered_second=now/1000;
+}
+std::string diagnostic_report();
+bool save_report_file(const std::wstring& path,const std::string& contents);
 void tick() {
     if (!shared) return;
     if (game_handle && WaitForSingleObject(game_handle,0)==WAIT_OBJECT_0) {
-        disconnect();set(attach_button,L"连接并启用");EnableWindow(attach_button,TRUE);set(status_label,L"游戏已退出；重新启动后再次连接。");return;
+        if (lock_ipc()) {snapshot=*shared;ReleaseMutex(ipc_mutex);}
+        exit_code_known=GetExitCodeProcess(game_handle,&game_exit_code)!=FALSE;game_exited=true;
+        disconnect(true);
+        auto directory=UbDiagnosticDirectory(true);
+        if (!directory.empty()) {
+            auto path=directory+L"\\uni2-"+std::to_wstring(pid)+L"-status.txt";
+            if (save_report_file(path,diagnostic_report())) last_report_path=path;
+        }
+        set(attach_button,L"连接并启用");EnableWindow(attach_button,TRUE);
+        set(status_label,L"游戏已退出，保护已停止；已保留最后状态，可点击“保存诊断状态”。"+
+            (last_report_path.empty()?std::wstring(L" 自动保存失败。"):std::wstring(L" 诊断已自动保存在本地。")));
+        return;
     }
     if (!lock_ipc()) {set(status_label,L"插件控制通道忙；尚未取得新状态。");return;}
     shared->client_tick=GetTickCount();snapshot=*shared;ReleaseMutex(ipc_mutex);
+    DWORD now=GetTickCount();refresh_candidates(now);
     std::wstring state=UbWide(std::string(snapshot.message_utf8,strnlen(snapshot.message_utf8,256)));
     if (DWORD(GetTickCount()-snapshot.heartbeat)>3000) state=L"插件心跳过期，不能确认保护有效。";
     else if (snapshot.battle_suspended) state+=L"  当前对战中，拦截暂停。";
+    else if (!snapshot.blocked_count) state+=L"  空名单：只观察搜索，通信不拦截。";
     else if (!snapshot.enable) state+=L"  保护开关已关闭。";
     else if (snapshot.policy_ack!=snapshot.policy_revision) state+=L"  等待名单生效。";
     else if (!UbEffective(snapshot,GetTickCount())) state+=L"  完整保护未生效。";
@@ -161,23 +230,9 @@ void tick() {
         L" | 拒绝握手 "+std::to_wstring(snapshot.request_rejects)+L" | 拦截发送 "+std::to_wstring(snapshot.send_rejects)+
         L" | 丢弃黑名单消息 "+std::to_wstring(snapshot.receive_drops);
     if (snapshot.search_count) detail+=L" | 列表距今 "+std::to_wstring(DWORD(GetTickCount()-snapshot.search_tick)/1000)+L" 秒";
+    detail+=L" | 最近2分钟 "+std::to_wstring(rows.size())+L" 人";
+    if (candidate_history.omitted()) detail+=L" | 历史列表已满，省略新行 "+std::to_wstring(candidate_history.omitted())+L" 次";
     set(summary_label,detail);
-    if (sequence==snapshot.capture_sequence) return;
-    uint64_t selected=0;int current=ListView_GetNextItem(candidates,-1,LVNI_SELECTED);
-    if (current>=0 && size_t(current)<rows.size()) selected=rows[size_t(current)].steam_id;
-    sequence=snapshot.capture_sequence;
-    rows.assign(snapshot.candidates,snapshot.candidates+std::min(snapshot.candidate_count,UB_MAX_CANDIDATES));
-    SendMessageW(candidates,WM_SETREDRAW,FALSE,0);ListView_DeleteAllItems(candidates);
-    for (size_t i=0;i<rows.size();i++) {
-        const auto& c=rows[i];std::wstring name=L"未知";
-        if ((c.flags&UB_NAME_KNOWN) && memchr(c.name_utf8,0,sizeof(c.name_utf8))) name=UbWide(c.name_utf8);
-        cell(candidates,int(i),0,name);cell(candidates,int(i),1,std::to_wstring(c.steam_id));
-        cell(candidates,int(i),2,(c.flags&UB_PING_KNOWN)?std::to_wstring(c.estimated_ping_ms)+L" ms":L"未知");
-        cell(candidates,int(i),3,L"未知 / 未测");cell(candidates,int(i),4,std::to_wstring(c.lobby_id));
-        cell(candidates,int(i),5,contains(c.steam_id)?L"已拉黑":L"未拉黑");
-        if (selected==c.steam_id) ListView_SetItemState(candidates,int(i),LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
-    }
-    SendMessageW(candidates,WM_SETREDRAW,TRUE,0);InvalidateRect(candidates,nullptr,TRUE);
 }
 void copy_id() {
     int n=ListView_GetNextItem(candidates,-1,LVNI_SELECTED);
@@ -189,17 +244,64 @@ void copy_id() {
     if (OpenClipboard(window)) {EmptyClipboard();if (!SetClipboardData(CF_UNICODETEXT,mem)) GlobalFree(mem);CloseClipboard();}
     else GlobalFree(mem);
 }
+std::string hex32(uint32_t value) {char buf[16]{};wsprintfA(buf,"0x%08lx",static_cast<unsigned long>(value));return buf;}
+std::string fault_report() {
+    std::string result="fault_trace_kind: bounded_first_chance_not_proof_of_fatal_crash\r\n";
+    auto path=UbFaultPath(pid);
+    HANDLE in=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if (in==INVALID_HANDLE_VALUE) return result+"fault_trace_available: 0\r\nfault_trace_read_error: "+std::to_string(GetLastError())+"\r\n";
+    result+="fault_trace_available: 1\r\n";
+    std::vector<UbFaultRecord> records;
+    for (uint32_t i=0;i<UB_FAULT_LIMIT;i++) {
+        UbFaultRecord record{};DWORD done=0;
+        if (!ReadFile(in,&record,sizeof(record),&done,nullptr)) {result+="fault_trace_read_error: "+std::to_string(GetLastError())+"\r\n";break;}
+        if (!done) break;
+        if (done!=sizeof(record) || record.magic!=UB_FAULT_MAGIC || record.bytes!=sizeof(record) || record.version!=1 ||
+            record.pid!=pid || !record.sequence) {result+="fault_trace_invalid_record: 1\r\n";break;}
+        records.push_back(record);
+    }
+    CloseHandle(in);
+    std::sort(records.begin(),records.end(),[](const UbFaultRecord& a,const UbFaultRecord& b){return a.sequence<b.sequence;});
+    for (size_t i=0;i<records.size();i++) {
+        const auto& record=records[i];std::string prefix="fault."+std::to_string(i)+".";
+        auto field=[&](const char* key,const std::string& value){result+=prefix+key+": "+value+"\r\n";};
+        field("code",hex32(record.code));field("flags",hex32(record.flags));field("eip",hex32(record.eip));
+        field("operation",record.operation==UINT32_MAX?"unknown":std::to_string(record.operation));
+        field("fault_address",hex32(record.fault_address));field("allocation_base",hex32(record.allocation_base));
+        field("sequence",std::to_string(record.sequence));field("thread",std::to_string(record.tid));field("tick",std::to_string(record.tick));
+        field("stage",UbTraceStageName(record.stage));field("search_count",std::to_string(record.search_count));
+        bool found=false;
+        for (const auto& module:game_modules) if (record.allocation_base==module.base && record.eip>=module.base &&
+            uint64_t(record.eip)-module.base<module.bytes) {
+            field("module",UbUtf8(module.name));field("module_rva",hex32(record.eip-module.base));found=true;break;
+        }
+        if (!found) field("module","unknown_or_loaded_after_attachment");
+    }
+    return result+"fault_trace_records: "+std::to_string(records.size())+"\r\n";
+}
+std::string diagnostic_report() {
+    std::string s=UbStatusReport(snapshot,pid,UbUtf8(attachment_error),GetTickCount(),shared!=nullptr);
+    s+="snapshot_source: "+std::string(game_exited?"last_before_exit":shared?"connected":"unconnected")+"\r\n";
+    s+="game_exited: "+std::to_string(game_exited)+"\r\nexit_code_known: "+std::to_string(exit_code_known)+"\r\n";
+    if (exit_code_known) s+="game_exit_code: "+hex32(game_exit_code)+"\r\n";
+    s+="candidate_retention_ms: "+std::to_string(UB_CANDIDATE_RETENTION_MS)+"\r\nrecent_candidate_count: "+
+        std::to_string(candidate_history.rows().size())+"\r\nhistory_omitted_rows: "+std::to_string(candidate_history.omitted())+"\r\n";
+    if (pid) s+=fault_report();
+    return s;
+}
+bool save_report_file(const std::wstring& path,const std::string& contents) {
+    HANDLE out=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);DWORD done=0;
+    if (out==INVALID_HANDLE_VALUE) return false;
+    bool ok=WriteFile(out,contents.data(),static_cast<DWORD>(contents.size()),&done,nullptr) && done==contents.size() && FlushFileBuffers(out);
+    CloseHandle(out);return ok;
+}
 void report() {
     wchar_t path[32768]=L"uni2-blacklist-status.txt";
     OPENFILENAMEW f{};f.lStructSize=sizeof(f);f.hwndOwner=window;f.lpstrFile=path;f.nMaxFile=32768;
     f.lpstrFilter=L"文本文件\0*.txt\0\0";f.lpstrDefExt=L"txt";f.Flags=OFN_OVERWRITEPROMPT|OFN_NOCHANGEDIR;
     if (!GetSaveFileNameW(&f)) return;
     if (shared && lock_ipc()) {snapshot=*shared;ReleaseMutex(ipc_mutex);}
-    std::string s=UbStatusReport(snapshot,pid,UbUtf8(attachment_error),GetTickCount());
-    HANDLE out=CreateFileW(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);DWORD done=0;
-    if (out==INVALID_HANDLE_VALUE) {error(L"无法保存状态文件。");return;}
-    bool ok=WriteFile(out,s.data(),static_cast<DWORD>(s.size()),&done,nullptr) && done==s.size() && FlushFileBuffers(out);CloseHandle(out);
-    if (!ok) error(L"状态文件未完整保存。");
+    if (!save_report_file(path,diagnostic_report())) error(L"状态文件未完整保存。");
 }
 LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
     try {
@@ -211,11 +313,12 @@ LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
             attach_button=control(L"BUTTON",L"连接并启用",BS_PUSHBUTTON|WS_TABSTOP,ID_ATTACH);
             enable_box=control(L"BUTTON",L"启用黑名单（已有对战暂停拦截；关闭此窗口将停止保护）",BS_AUTOCHECKBOX|WS_TABSTOP,ID_ENABLE);
             SendMessageW(enable_box,BM_SETCHECK,BST_CHECKED,0);
-            status_label=control(L"STATIC",L"",SS_LEFT,204);summary_label=control(L"STATIC",L"游戏当前搜索结果：等待游戏自然刷新列表",SS_LEFT,205);
+            status_label=control(L"STATIC",L"",SS_LEFT,204);summary_label=control(L"STATIC",L"最近2分钟出现的玩家：等待游戏自然刷新列表",SS_LEFT,205);
             candidates=control(WC_LISTVIEWW,L"",LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP,ID_CANDIDATES);
             ListView_SetExtendedListViewStyle(candidates,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
-            column(candidates,0,L"玩家名（Steam 原文）",190);column(candidates,1,L"SteamID64",170);column(candidates,2,L"路径估计延迟",110);
-            column(candidates,3,L"实际 RTT / 丢包率",145);column(candidates,4,L"LobbyID",170);column(candidates,5,L"状态",90);
+            column(candidates,0,L"玩家名（暂未知）",180);column(candidates,1,L"SteamID64",165);column(candidates,2,L"估计延迟（暂未知）",110);
+            column(candidates,3,L"实际 RTT / 丢包率",140);column(candidates,4,L"最近 LobbyID",155);column(candidates,5,L"名单 / 搜索结果",170);
+            column(candidates,6,L"最近出现",105);
             control(L"BUTTON",L"拉黑选中玩家",BS_PUSHBUTTON|WS_TABSTOP,ID_BLOCK);control(L"BUTTON",L"复制 SteamID64",BS_PUSHBUTTON|WS_TABSTOP,ID_COPY);
             control(L"BUTTON",L"保存诊断状态",BS_PUSHBUTTON|WS_TABSTOP,ID_REPORT);
             control(L"STATIC",L"手动 SteamID64",SS_LEFT,200);id_edit=control(L"EDIT",L"",WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,ID_ID);
@@ -225,7 +328,7 @@ LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
             blacklist=control(WC_LISTVIEWW,L"",LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP,ID_BLACKLIST);
             ListView_SetExtendedListViewStyle(blacklist,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
             column(blacklist,0,L"备注",280);column(blacklist,1,L"SteamID64",230);control(L"BUTTON",L"移除选中玩家",BS_PUSHBUTTON|WS_TABSTOP,ID_REMOVE);
-            control(L"STATIC",L"列表受游戏搜索范围限制；不是全体在线玩家。估计延迟不是实测 RTT。未知值不会填造数据。",SS_LEFT,203);
+            control(L"STATIC",L"玩家最后出现后保留2分钟；本轮停用额外 Steam 元数据查询，姓名和延迟暂显示未知。最近出现不代表仍待机。",SS_LEFT,203);
             try {entries=UbLoadSettings();} catch(const std::exception& e) {settings_failed=true;SendMessageW(enable_box,BM_SETCHECK,BST_UNCHECKED,0);error(UbWide(e.what()));}
             rebuild_blacklist();scan();layout();SetTimer(h,1,500,nullptr);return 0;
         }
@@ -245,7 +348,7 @@ LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
             case ID_ADD:add(UbParseId(text(id_edit)),text(alias_edit));break;
             case ID_REMOVE: {int n=ListView_GetNextItem(blacklist,-1,LVNI_SELECTED);
                 if (n>=0 && size_t(n)<entries.size() && !settings_failed) {auto changed=entries;changed.erase(changed.begin()+n);
-                    UbSaveSettings(changed);entries=std::move(changed);rebuild_blacklist();policy();sequence=UINT32_MAX;}break;}
+                    UbSaveSettings(changed);entries=std::move(changed);rebuild_blacklist();policy();rows_dirty=true;}break;}
             case ID_COPY:copy_id();break;
             case ID_REPORT:report();break;
             }return 0;
@@ -267,7 +370,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
     WNDCLASSW cls{};cls.lpfnWndProc=proc;cls.hInstance=instance;cls.lpszClassName=L"UNI2BlacklistWindow";
     cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hIcon=LoadIconW(nullptr,IDI_APPLICATION);cls.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);
     RegisterClassW(&cls);
-    window=CreateWindowExW(WS_EX_CONTROLPARENT,cls.lpszClassName,L"UNI2 黑名单 0.1.0 候选版",WS_OVERLAPPEDWINDOW,
+    window=CreateWindowExW(WS_EX_CONTROLPARENT,cls.lpszClassName,(L"UNI2 黑名单 "+UbWide(UB_VERSION)).c_str(),WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,CW_USEDEFAULT,1120,840,nullptr,nullptr,instance,nullptr);
     if (!window) {CloseHandle(singleton);return 2;}
     ShowWindow(window,show);UpdateWindow(window);

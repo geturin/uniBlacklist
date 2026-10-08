@@ -11,6 +11,7 @@
 #include "protocol.h"
 #include "profile.h"
 #include "memory.h"
+#include "fault_trace.h"
 #include "MinHook.h"
 
 static_assert(sizeof(void*)==4,"only x86 ABI supported");
@@ -22,6 +23,7 @@ HANDLE ipc_mutex=nullptr, mapping=nullptr;
 volatile LONG started=0, ready=0;
 volatile LONG network_mask=0;
 bool network_failed=false;
+bool native_policy_ready=false;
 UbHookDiagnostic hook_diagnostics[3]{};
 UbState runtime_state=UB_STARTING;
 UbStatus runtime_status=UB_OK;
@@ -97,15 +99,9 @@ uint64_t decimal(const char* s) {
 }
 using LobbyData=const char* (__cdecl*)(void*,uint64_t,const char*);
 using LobbyOwner=uint64_t (__cdecl*)(void*,uint64_t);
-using Persona=const char* (__cdecl*)(void*,uint64_t);
-using ParsePing=bool (__cdecl*)(void*,const char*,void*);
-using EstimatePing=int (__cdecl*)(void*,const void*);
-using ReleaseMessage=void (__cdecl*)(void*);
 LobbyData lobby_data=nullptr;
 LobbyOwner lobby_owner=nullptr;
-Persona persona=nullptr;
-ParsePing parse_ping=nullptr;
-EstimatePing estimate_ping=nullptr;
+using ReleaseMessage=void (__cdecl*)(void*);
 ReleaseMessage release_message=nullptr;
 uint64_t owner(uint64_t lobby) {
     void* mm=context(0x5f9774);
@@ -118,24 +114,24 @@ uint64_t owner(uint64_t lobby) {
     uint64_t id=lobby_owner(mm,lobby);
     return UbPlayerId(id)?id:0;
 }
+// Search observations deliberately make no additional Steam SDK calls.
+// Names and ping remain unknown until their safe source is established.
 void metadata(UbCandidate& c) {
     c.estimated_ping_ms=-1;c.observed_tick=GetTickCount();
-    void* friends=context(0x5f9780);
-    if (friends && bounded_string(persona(friends,c.steam_id),c.name_utf8,sizeof(c.name_utf8))) {
-        if (c.name_utf8[0] && strcmp(c.name_utf8,"[unknown]") &&
-            MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,c.name_utf8,-1,nullptr,0)) c.flags|=UB_NAME_KNOWN;
-        else c.name_utf8[0]=0;
-    }
-    void* mm=context(0x5f9774);void* utils=context(0x5f97a4);
-    char text[1024]{};
-    if (mm && utils && bounded_string(lobby_data(mm,c.lobby_id,"RoomPropertyKey_PingLocation"),text,sizeof(text)) && text[0]) {
-        alignas(8) unsigned char location[512]{};
-        if (parse_ping(utils,text,location)) {
-            int ping=estimate_ping(utils,location);
-            if (ping>=0) {c.estimated_ping_ms=ping;c.flags|=UB_PING_KNOWN;}
-        }
-    }
     if (blocked(c.steam_id)) c.flags|=UB_BLOCKED;
+}
+
+bool policy_requested() {
+    DWORD saved=GetLastError();
+    AcquireSRWLockShared(&policy_lock);
+    bool active=enabled && id_count!=0 && DWORD(GetTickCount()-client_tick)<10000;
+    ReleaseSRWLockShared(&policy_lock);
+    SetLastError(saved);return active;
+}
+bool filtering() {
+    DWORD saved=GetLastError();
+    bool active=policy_requested() && InterlockedCompareExchange(&ready,0,0)==1 && !battle();
+    SetLastError(saved);return active;
 }
 
 using Search=uint32_t (__thiscall*)(void*,void*);
@@ -144,22 +140,23 @@ using Callback=void (__thiscall*)(void*,void*);
 Search original_search=nullptr;
 Join original_join=nullptr;
 Callback original_request=nullptr,original_chat=nullptr,original_members=nullptr;
-uint32_t __fastcall hook_search(void* self,void*,void* list) {
-    uint32_t result=original_search(self,list);
-    DWORD saved=GetLastError();
-    if (!(result&255)) {SetLastError(saved);return result;}
+// Keep this allocation-heavy path out of the frame that calls the game.
+// The previous hook reserved over 23 KiB before entering original_search.
+__attribute__((noinline)) void capture_search(void* self) {
+    UbTraceScope trace(UB_TRACE_SEARCH_CAPTURE);
     const uintptr_t root=reinterpret_cast<uintptr_t>(self);
     uint32_t allocated=0,count=0,rows=0,index=0;
     if (!UbGet(root+0x2c,allocated) || !UbGet(root+0x30,rows) ||
         !UbGet(root+0x34,count) || !UbGet(root+0x38,index) || allocated>4096 ||
         count>allocated || (count && (!rows || !index))) {
-        InterlockedIncrement(&errors);SetLastError(saved);return result;
+        InterlockedIncrement(&errors);return;
     }
     std::vector<uint32_t> before(count),after;
     if (count && !UbRead(index,before.data(),count*4)) {
-        InterlockedIncrement(&errors);SetLastError(saved);return result;
+        InterlockedIncrement(&errors);return;
     }
-    std::array<UbCandidate,UB_MAX_CANDIDATES> found{};
+    std::vector<UbCandidate> found(UB_MAX_CANDIDATES);
+    after.reserve(count);
     uint32_t n=0,extra=0;
     bool valid=true;
     for (uint32_t slot:before) {
@@ -175,7 +172,7 @@ uint32_t __fastcall hook_search(void* self,void*,void* list) {
         if (n<UB_MAX_CANDIDATES) found[n++]=c;else ++extra;
         if (!blocked(id)) after.push_back(slot);
     }
-    if (!valid) {InterlockedIncrement(&errors);SetLastError(saved);return result;}
+    if (!valid) {InterlockedIncrement(&errors);return;}
     // Only the game's own search producer thread writes its cached index list,
     // before its original completion callback can choose a candidate.
     if (after.size()!=before.size()) {
@@ -190,11 +187,22 @@ uint32_t __fastcall hook_search(void* self,void*,void* list) {
     }
     AcquireSRWLockExclusive(&capture_lock);
     memcpy(capture,found.data(),sizeof(capture));capture_count=n;omitted=extra;
-    ++search_count;search_tick=GetTickCount();captured=true;
+    ++search_count;InterlockedExchange(&UbFaultRuntime::search_count,search_count);search_tick=GetTickCount();captured=true;
     ReleaseSRWLockExclusive(&capture_lock);
+}
+uint32_t __fastcall hook_search(void* self,void*,void* list) {
+    uint32_t result;
+    {UbTraceScope trace(UB_TRACE_SEARCH_ORIGINAL);result=original_search(self,list);}
+    DWORD saved=GetLastError();
+    if (result&255) {
+        // Catch only our C++ allocation failures, never swallow native SEH.
+        try {capture_search(self);} catch(...) {InterlockedIncrement(&errors);}
+    }
     SetLastError(saved);return result;
 }
 uint32_t __fastcall hook_join(void* self,void*,uint64_t lobby) {
+    if (!filtering()) return original_join(self,lobby);
+    UbTraceScope trace(UB_TRACE_JOIN);
     DWORD saved=GetLastError();uint64_t id=owner(lobby);
     if (blocked(id)) {
         uint8_t zero=0;
@@ -208,6 +216,8 @@ uint32_t __fastcall hook_join(void* self,void*,uint64_t lobby) {
     SetLastError(saved);return original_join(self,lobby);
 }
 void __fastcall hook_request(void* self,void*,void* event) {
+    if (!filtering()) {original_request(self,event);return;}
+    UbTraceScope trace(UB_TRACE_CALLBACK);
     DWORD saved=GetLastError();uint64_t id=0;
     if (UbGet(reinterpret_cast<uintptr_t>(event),id) && blocked(id)) {
         InterlockedIncrement(&rejects);SetLastError(saved);return;
@@ -215,6 +225,8 @@ void __fastcall hook_request(void* self,void*,void* event) {
     SetLastError(saved);original_request(self,event);
 }
 void __fastcall hook_chat(void* self,void*,void* event) {
+    if (!filtering()) {original_chat(self,event);return;}
+    UbTraceScope trace(UB_TRACE_CALLBACK);
     DWORD saved=GetLastError();uint64_t id=0;
     if (UbGet(reinterpret_cast<uintptr_t>(event)+8,id) && blocked(id)) {
         InterlockedIncrement(&drops);SetLastError(saved);return;
@@ -222,6 +234,8 @@ void __fastcall hook_chat(void* self,void*,void* event) {
     SetLastError(saved);original_chat(self,event);
 }
 void __fastcall hook_members(void* self,void*,void* event) {
+    if (!filtering()) {original_members(self,event);return;}
+    UbTraceScope trace(UB_TRACE_CALLBACK);
     DWORD saved=GetLastError();uint64_t id=0;uint32_t change=0;
     const uintptr_t p=reinterpret_cast<uintptr_t>(event);
     // Suppress the game-handler dispatch for a blocked new lobby member only.
@@ -241,16 +255,22 @@ using ModernAccept=bool (__thiscall*)(void*,const void*);
 LegacySend original_ls=nullptr;LegacyRead original_lr=nullptr;LegacyAccept original_la=nullptr;
 ModernSend original_ms=nullptr;ModernRead original_mr=nullptr;ModernAccept original_ma=nullptr;
 bool __fastcall hook_ls(void* self,void*,uint64_t id,const void* data,uint32_t len,int kind,int channel) {
+    if (!filtering()) return original_ls(self,id,data,len,kind,channel);
+    UbTraceScope trace(UB_TRACE_NETWORK);
     DWORD saved=GetLastError();
     if (blocked(id)) {InterlockedIncrement(&sends);SetLastError(saved);return false;}
     SetLastError(saved);return original_ls(self,id,data,len,kind,channel);
 }
 bool __fastcall hook_la(void* self,void*,uint64_t id) {
+    if (!filtering()) return original_la(self,id);
+    UbTraceScope trace(UB_TRACE_NETWORK);
     DWORD saved=GetLastError();
     if (blocked(id)) {InterlockedIncrement(&rejects);SetLastError(saved);return false;}
     SetLastError(saved);return original_la(self,id);
 }
 bool __fastcall hook_lr(void* self,void*,void* data,uint32_t cap,uint32_t* size,uint64_t* peer,int channel) {
+    if (!filtering()) return original_lr(self,data,cap,size,peer,channel);
+    UbTraceScope trace(UB_TRACE_NETWORK);
     for (int i=0;i<32;i++) {
         bool ok=original_lr(self,data,cap,size,peer,channel);DWORD saved=GetLastError();uint64_t id=0;
         if (!ok || !UbGet(reinterpret_cast<uintptr_t>(peer),id) || !blocked(id)) {SetLastError(saved);return ok;}
@@ -264,16 +284,22 @@ bool __fastcall hook_lr(void* self,void*,void* data,uint32_t cap,uint32_t* size,
     return false;
 }
 int __fastcall hook_ms(void* self,void*,const void* peer,const void* data,uint32_t len,int flags,int channel) {
+    if (!filtering()) return original_ms(self,peer,data,len,flags,channel);
+    UbTraceScope trace(UB_TRACE_NETWORK);
     DWORD saved=GetLastError();
     if (blocked(identity(peer))) {InterlockedIncrement(&sends);SetLastError(saved);return 15;}// k_EResultAccessDenied
     SetLastError(saved);return original_ms(self,peer,data,len,flags,channel);
 }
 bool __fastcall hook_ma(void* self,void*,const void* peer) {
+    if (!filtering()) return original_ma(self,peer);
+    UbTraceScope trace(UB_TRACE_NETWORK);
     DWORD saved=GetLastError();
     if (blocked(identity(peer))) {InterlockedIncrement(&rejects);SetLastError(saved);return false;}
     SetLastError(saved);return original_ma(self,peer);
 }
 int __fastcall hook_mr(void* self,void*,int channel,void** messages,int max) {
+    if (!filtering()) return original_mr(self,channel,messages,max);
+    UbTraceScope trace(UB_TRACE_NETWORK);
     int count=original_mr(self,channel,messages,max);DWORD saved=GetLastError();
     if (count<=0 || count>max || max>4096 || !UbWritable(reinterpret_cast<uintptr_t>(messages),count*4)) {
         SetLastError(saved);return count;
@@ -353,11 +379,12 @@ void target_info(UbHookDiagnostic& d,void* target) {
 void reset_diagnostic(UbHookDiagnostic& d,UbHookMethod method) {
     d={};d.method=method;d.slot=UINT32_MAX;d.index=UINT32_MAX;
 }
-bool install(std::vector<Hook>& hooks,UbHookDiagnostic& d) {
+bool install(std::vector<Hook>& hooks,UbHookDiagnostic& d,size_t base=0) {
+    UbTraceScope trace(UB_TRACE_INSTALL);
     std::vector<void*> created;
     for (size_t i=0;i<hooks.size();i++) {
-        auto& h=hooks[i];d.index=static_cast<uint32_t>(i);
-        if (i<5) d.targets[i]=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(h.target));
+        auto& h=hooks[i];d.index=static_cast<uint32_t>(i+base);
+        if (i+base<5) d.targets[i+base]=static_cast<uint32_t>(reinterpret_cast<uintptr_t>(h.target));
         if (d.interface_address) {
             constexpr unsigned slots[]={0,2,3};d.slot=slots[i];
             d.slot_address=d.vtable_address+d.slot*4;
@@ -370,7 +397,7 @@ bool install(std::vector<Hook>& hooks,UbHookDiagnostic& d) {
         created.push_back(h.target);
     }
     for (size_t i=0;i<created.size();i++) {
-        d.index=static_cast<uint32_t>(i);target_info(d,created[i]);
+        d.index=static_cast<uint32_t>(i+base);target_info(d,created[i]);
         if (d.interface_address) {constexpr unsigned slots[]={0,2,3};d.slot=slots[i];d.slot_address=d.vtable_address+d.slot*4;}
         d.stage=UB_STAGE_MH_QUEUE;d.minhook_status=MH_QueueEnableHook(created[i]);
         if (d.minhook_status!=MH_OK) goto fail;
@@ -505,10 +532,11 @@ void network_failure(bool modern) {
     message(text,UB_ERROR,UB_HOOK_FAILURE);
 }
 bool install_network(bool modern) {
-    if (network_failed) return false;
+    if (network_failed || !policy_requested() || battle()) return false;
     void* iface=context(modern?0x5f9798:0x5a3c08);
     if (!iface) return false;
     auto& d=hook_diagnostics[modern?2:1];reset_diagnostic(d,modern?UB_HOOK_VTABLE:UB_HOOK_MINHOOK);
+    UbTraceScope trace(UB_TRACE_INSTALL);
     bool ok=false;
     if (modern) {
         LONG previous=InterlockedExchange(&ready,0);
@@ -550,12 +578,22 @@ void check_modern_ownership() {
         }
     }
 }
+bool install_native_policy() {
+    if (network_failed || !policy_requested() || battle()) return false;
+    auto& d=hook_diagnostics[0];
+    std::vector<Hook> h={
+        {reinterpret_cast<void*>(image+SIG_join_lobby.rva),reinterpret_cast<void*>(hook_join),reinterpret_cast<void**>(&original_join)},
+        {reinterpret_cast<void*>(image+SIG_p2p_request.rva),reinterpret_cast<void*>(hook_request),reinterpret_cast<void**>(&original_request)},
+        {reinterpret_cast<void*>(image+SIG_lobby_chat.rva),reinterpret_cast<void*>(hook_chat),reinterpret_cast<void**>(&original_chat)},
+        {reinterpret_cast<void*>(image+SIG_lobby_members.rva),reinterpret_cast<void*>(hook_members),reinterpret_cast<void**>(&original_members)}};
+    if (!install(h,d,1)) {
+        InterlockedExchange(&ready,0);network_failed=true;
+        message("房间入口挂钩失败；拦截停用，请保存诊断状态。",UB_ERROR,UB_HOOK_FAILURE);return false;
+    }
+    native_policy_ready=true;return true;
+}
 DWORD WINAPI worker(void*) {
-    bool legacy_attempted=false,modern_attempted=false;
     for (;;) {
-        if (!legacy_attempted && context(0x5a3c08)) {legacy_attempted=true;install_network(false);}
-        if (!modern_attempted && context(0x5f9798)) {modern_attempted=true;install_network(true);}
-        check_modern_ownership();
         if (lock_ipc()) {
             AcquireSRWLockExclusive(&policy_lock);
             enabled=shared->enable!=0;client_tick=shared->client_tick;
@@ -563,12 +601,27 @@ DWORD WINAPI worker(void*) {
             memcpy(ids,shared->blocked,id_count*8);std::sort(ids,ids+id_count);
             ReleaseSRWLockExclusive(&policy_lock);
             shared->policy_ack=shared->policy_revision;
+            ReleaseMutex(ipc_mutex);
+        }
+        // Observing an empty/disabled list installs only the search hook.
+        if (policy_requested() && !battle() && !network_failed) {
+            if (!native_policy_ready) install_native_policy();
+            if (native_policy_ready && !network_failed && !(network_mask&1) && context(0x5a3c08)) install_network(false);
+            if (native_policy_ready && !network_failed && !(network_mask&2) && context(0x5f9798)) install_network(true);
+        }
+        check_modern_ownership();
+        if (lock_ipc()) {
             shared->state=runtime_state;shared->status=runtime_status;
-            memcpy(shared->message_utf8,runtime_message,sizeof(runtime_message));
+            if (!network_failed && !policy_requested())
+                strncpy(shared->message_utf8,"观察模式：名单为空、开关关闭或心跳过期；不拦截通信。",sizeof(shared->message_utf8)-1);
+            else if (!network_failed && network_mask!=3)
+                strncpy(shared->message_utf8,"候选过滤已接入；等待通信接口，完整保护未生效。",sizeof(shared->message_utf8)-1);
+            else memcpy(shared->message_utf8,runtime_message,sizeof(runtime_message));
+            shared->message_utf8[sizeof(shared->message_utf8)-1]=0;
             shared->heartbeat=GetTickCount();UbGet(image+0x5a4764,shared->host_scene);
             shared->battle_suspended=battle();shared->network_hooks_ready=static_cast<uint32_t>(network_mask);
-            shared->filter_active=ready==1 && enabled && DWORD(GetTickCount()-client_tick)<10000 && !shared->battle_suspended;
-            shared->effective_enabled=shared->filter_active && network_mask==3 && !network_failed;
+            shared->filter_active=filtering();
+            shared->effective_enabled=shared->filter_active && native_policy_ready && network_mask==3 && !network_failed;
             memcpy(shared->hook_diagnostics,hook_diagnostics,sizeof(hook_diagnostics));
             shared->candidate_skips=skips;shared->request_rejects=rejects;
             shared->send_rejects=sends;shared->receive_drops=drops;shared->metadata_errors=errors;
@@ -598,11 +651,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI BlacklistStart(void* argument) {
         if (!signature(*s)) return finish(UB_SIGNATURE);
     lobby_data=api<LobbyData>("SteamAPI_ISteamMatchmaking_GetLobbyData");
     lobby_owner=api<LobbyOwner>("SteamAPI_ISteamMatchmaking_GetLobbyOwner");
-    persona=api<Persona>("SteamAPI_ISteamFriends_GetFriendPersonaName");
-    parse_ping=api<ParsePing>("SteamAPI_ISteamNetworkingUtils_ParsePingLocationString");
-    estimate_ping=api<EstimatePing>("SteamAPI_ISteamNetworkingUtils_EstimatePingTimeFromLocalHost");
     release_message=api<ReleaseMessage>("SteamAPI_SteamNetworkingMessage_t_Release");
-    if (!lobby_data || !lobby_owner || !persona || !parse_ping || !estimate_ping || !release_message) return finish(UB_WRONG_IMAGE);
+    if (!lobby_data || !lobby_owner || !release_message) return finish(UB_WRONG_IMAGE);
     wchar_t map_name[128],mutex_name[128];UbNames(GetCurrentProcessId(),map_name,mutex_name);
     ipc_mutex=CreateMutexW(nullptr,FALSE,mutex_name);
     mapping=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(UbShared),map_name);
@@ -611,20 +661,17 @@ extern "C" __declspec(dllexport) DWORD WINAPI BlacklistStart(void* argument) {
     if (!shared || !lock_ipc(1000)) return finish(UB_IPC_FAILURE);
     memset(shared,0,sizeof(*shared));shared->magic=UB_MAGIC;shared->abi=UB_ABI;
     shared->bytes=sizeof(*shared);shared->pid=GetCurrentProcessId();ReleaseMutex(ipc_mutex);
-    message("候选和房间过滤启动中；等待游戏初始化通信接口，握手保护尚未齐全。",UB_STARTING);
+    message("正在接入搜索观察入口；空名单不安装通信挂钩。",UB_STARTING);
     HMODULE retained=nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,reinterpret_cast<LPCWSTR>(&BlacklistStart),&retained);
+    UbInstallFaultTrace();
     reset_diagnostic(hook_diagnostics[0],UB_HOOK_MINHOOK);
     hook_diagnostics[0].stage=UB_STAGE_MH_INIT;hook_diagnostics[0].minhook_status=MH_Initialize();
     if (hook_diagnostics[0].minhook_status!=MH_OK) {message("无法初始化挂钩。",UB_ERROR,UB_HOOK_FAILURE);return finish(UB_HOOK_FAILURE);}
-    std::vector<Hook> h={
-        {reinterpret_cast<void*>(image+SIG_search_results.rva),reinterpret_cast<void*>(hook_search),reinterpret_cast<void**>(&original_search)},
-        {reinterpret_cast<void*>(image+SIG_join_lobby.rva),reinterpret_cast<void*>(hook_join),reinterpret_cast<void**>(&original_join)},
-        {reinterpret_cast<void*>(image+SIG_p2p_request.rva),reinterpret_cast<void*>(hook_request),reinterpret_cast<void**>(&original_request)},
-        {reinterpret_cast<void*>(image+SIG_lobby_chat.rva),reinterpret_cast<void*>(hook_chat),reinterpret_cast<void**>(&original_chat)},
-        {reinterpret_cast<void*>(image+SIG_lobby_members.rva),reinterpret_cast<void*>(hook_members),reinterpret_cast<void**>(&original_members)}};
+    std::vector<Hook> h={{reinterpret_cast<void*>(image+SIG_search_results.rva),reinterpret_cast<void*>(hook_search),reinterpret_cast<void**>(&original_search)}};
     if (!install(h,hook_diagnostics[0])) {message("原生入口挂钩失败；黑名单未启用。",UB_ERROR,UB_HOOK_FAILURE);return finish(UB_HOOK_FAILURE);}
     InterlockedExchange(&ready,1);
+    message("搜索观察已接入；空名单不安装通信挂钩。",UB_READY);
     HANDLE thread=CreateThread(nullptr,0,worker,nullptr,0,nullptr);
     if (!thread) {InterlockedExchange(&ready,0);message("无法启动黑名单控制线程。",UB_ERROR,UB_IPC_FAILURE);return finish(UB_IPC_FAILURE);}
     CloseHandle(thread);return finish(UB_OK);
