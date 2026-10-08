@@ -1,0 +1,77 @@
+{
+  "version": "0.1.0-candidate.4",
+  "source_commit": "7ea3dff4fdc7eba9980401343049a6e3748976df",
+  "compiler": "MinGW-w64 GCC 14 i686-w64-mingw32 static runtime",
+  "products": [
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.4-win32.zip",
+      "bytes": 668726,
+      "sha256": "dcb595e842a4f2ad9153205ddbf5c543a5de43866a5680dc434fb1b8c1f0a2bf",
+      "file_count": 11
+    },
+    {
+      "filename": "UNI2Blacklist-0.1.0-candidate.4-source.zip",
+      "bytes": 91236,
+      "sha256": "f3343eb23c734b6969fe42dfe0807aa83bbbb5b460b5be55c6d068c0cd2006d7",
+      "file_count": 36
+    }
+  ],
+  "supported_game_sha256": "4ebed985ecbf330ab8e495573361e49df20bb555263289d1aff5425fac9b7ed9",
+  "supported_game_bytes": 6921216,
+  "steam_api_sha256": "67ae11d71ae6ec404090094df1e47b614d27400dc53fa450023e6fbcf347902c",
+  "steam_dll_unchanged_source": "user confirmation; existing runtime fingerprint remains enforced",
+  "scene_rva": "0x5a4a84",
+  "scene_reference_count": 325,
+  "normalized_scene_references_identical": true,
+  "unique_hook_signatures_verified": 5,
+  "game_execution": false,
+  "native_windows_game_validation": false,
+  "wine_native_control_checks": 89,
+  "wine_scene_boundary_checks_included": 4,
+  "wine_history_exit_control_checks": 32,
+  "wine_gui_operation_checks": 14,
+  "packaged_dll_load_and_reject_check": true,
+  "old_abi_request_rejected": true,
+  "wine_previous_candidate_gui_stderr_sigsegv_unattributed": true,
+  "wine_control_exit_codes": {
+    "native-check": 0,
+    "history-exit-check": 0,
+    "gui-check": 0,
+    "dll-check": 0
+  },
+  "wine_final_stderr": {
+    "native-check": {
+      "bytes": 67,
+      "sha256": "354ad20c5dd86b42b08bd20ed0044750cb3c8ee7a3b05171cb143171d62c5945",
+      "qemu_sigsegv_message": true
+    },
+    "history-exit-check": {
+      "bytes": 67,
+      "sha256": "354ad20c5dd86b42b08bd20ed0044750cb3c8ee7a3b05171cb143171d62c5945",
+      "qemu_sigsegv_message": true
+    },
+    "gui-check": {
+      "bytes": 67,
+      "sha256": "354ad20c5dd86b42b08bd20ed0044750cb3c8ee7a3b05171cb143171d62c5945",
+      "qemu_sigsegv_message": true
+    },
+    "dll-check": {
+      "bytes": 67,
+      "sha256": "354ad20c5dd86b42b08bd20ed0044750cb3c8ee7a3b05171cb143171d62c5945",
+      "qemu_sigsegv_message": true
+    }
+  },
+  "wine_sigsegv_source_identified": false,
+  "quick_match_crash_root_cause_confirmed": false,
+  "quick_match_crash_resolved_on_native_windows": false,
+  "metadata_queries_temporarily_disabled": true,
+  "candidate_retention_ms": 120000,
+  "fresh_empty_policy_extra_native_and_network_hooks_installed": false,
+  "automatic_exit_status_and_bounded_fault_trace": true,
+  "original_assets_included": false,
+  "test_suite_included": false,
+  "binaries": {
+    "UNI2Blacklist.exe": "950c03acde38e8d7e52c026d5c79264b0791511ebfef1b850bb1157bc85b45f1",
+    "uni2-blacklist.dll": "6fd24a26442c637412e5738f0bc7b20a9bad30e34ef50ea011e8bc8c9e63332d"
+  }
+}

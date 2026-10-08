@@ -1,0 +1,3 @@
+dcb595e842a4f2ad9153205ddbf5c543a5de43866a5680dc434fb1b8c1f0a2bf  UNI2Blacklist-0.1.0-candidate.4-win32.zip
+f3343eb23c734b6969fe42dfe0807aa83bbbb5b460b5be55c6d068c0cd2006d7  UNI2Blacklist-0.1.0-candidate.4-source.zip
+aa01a9000c9de8e2550605d36fa98d18cc77b9b4fca239a2bafe804993720fd7  package-receipt.json
