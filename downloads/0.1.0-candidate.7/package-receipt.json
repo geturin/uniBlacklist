@@ -1,6 +1,6 @@
 {
   "version": "0.1.0-candidate.7",
-  "source_commit": "d481c8332fd3bb98dc638e94399223daf5979e6a",
+  "source_commit": "886ff8d1cc551133a08c5e71996b52484f5de5cd",
   "compiler": "MinGW-w64 GCC 14 i686-w64-mingw32 static runtime",
   "products": [
     {
@@ -11,8 +11,8 @@
     },
     {
       "filename": "UNI2Blacklist-0.1.0-candidate.7-source.zip",
-      "bytes": 171780,
-      "sha256": "2d0cb29c035ff8b3dbe95807c55b5b314912b15c6dc92094ea33b4b3df10e5a6",
+      "bytes": 171850,
+      "sha256": "0d130e5487be405f9f87767d5436fb8d788857f673a5250a46e17f193113fca9",
       "file_count": 54
     }
   ],
