@@ -1,3 +1,3 @@
-ef4d9e59de2c3a22173b48d58c3fc40b1884dafb3bd1d55bae3d3a67ffda0adc  UNI2Blacklist-0.1.0-candidate.7-win32.zip
-ccf0aa62a81b7123b5de84f4bc31d3a274d4cc7bc7b9ec8950f104f0314d53a1  UNI2Blacklist-0.1.0-candidate.7-source.zip
-d14fe898d38c2f660bb272d8cbc54d833f3419bd4385439dc19f1ff0dde0e72e  package-receipt.json
+9db6b9dc17af389cecddad37b43a78f49eab0c882bb95c371bcfea74551a915b  UNI2Blacklist-0.1.0-candidate.7-win32.zip
+7905db9ec34482e726362c920dfb9c4263f485ba1d3f8730c3bd8f03cf78d8e4  UNI2Blacklist-0.1.0-candidate.7-source.zip
+0d4759a1660a5964859a036679fbf3522bf5a2edff5432f96136deebca33b09c  package-receipt.json
